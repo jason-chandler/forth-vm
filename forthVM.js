@@ -86,13 +86,25 @@ class Debug {
 	}
     }
 }
+
+class Stack {
+    memory;
+    s0; // below bottom of stack
+    sp; // stack pointer
+    cell_size;
+
+    constructor(memory, s0, cell_size) {
+	this.memory = memory;
+	this.s0 = s0;
+	this.sp = s0 + 1; 
+	this.cell_size = cell_size;
+}
+
+
 class ForthVM {
     stack;
     rstack;
-    code_defs;
-    code_count;
     eax;
-    OpCode;
     memory;
     cell_size;
     ip;
@@ -102,12 +114,10 @@ class ForthVM {
     constructor() {
 	this.stack = [];
 	this.rstack = [];
-	this.code_defs = [];
 	this.memory = new Uint32Array(65536);
 	this.byteView = new Uint8Array(this.memory.buffer);
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
 	this.ip = 0; // program counter, current interp address
-	this.code_count = 0;
 	this.eax; // register for current value
 	this.latest = 0;
     }
@@ -140,7 +150,7 @@ class ForthVM {
 	    tempIp++
 	    console.log(name.charCodeAt(i));
 	}
-	// Arbitrary
+	// Arbitrary string size limit is 15 because alignment is annoying
 	this.ip += 16;
     }
 
@@ -243,15 +253,11 @@ class ForthVM {
 	this.ip = dest;
     }
 
-    // next says: whatever ip is pointing at is an address and i'll go to it
-    next() {
-	this.loadAddress();
-	this.jmp(this.eax);
-    }
-
     enter() {
-	this.rPush(ip);
+	let dest = this.memory[this.ip];
 	this.ip++;
+	this.rPush(ip);
+	jmp(dest);
     }
 	
     exit() {
@@ -275,8 +281,8 @@ class ForthVM {
 	    case OpCode.OP_NOOP:
 		this.noOp();
 		break;
-	    case OpCode.OP_NEXT:
-		this.next()
+	    case OpCode.OP_ENTER:
+		this.enter()
 	    case OP_PUSH_UINT32:
 		this.pushUint32();
 		break;
