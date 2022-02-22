@@ -26,21 +26,6 @@ class Chunk {
     }
 }
 
-class DictionaryEntry {
-    name;
-    link;
-    codeFieldAddress;
-    parameterFieldAddress;
-
-    constructor(name, link, codeFieldAddress, parameterFieldAddress) {
-	this.name = name;
-	this.link = link;
-	this.codeFieldAddress = codeFieldAddress;
-	this.parameterFieldAddress = parameterFieldAddress;
-    }
-    
-}
-
 class OpCode {
     static {}
     static OP_NOOP = 0;
@@ -87,17 +72,63 @@ class Debug {
     }
 }
 
+class Header {
+    
+}
+
+class Word {
+
+}
+
+
 class Stack {
+    vm;
     memory;
     s0; // below bottom of stack
-    sp; // stack pointer
+    sp_fetch; // stack pointer
     cell_size;
 
-    constructor(memory, s0, cell_size) {
-	this.memory = memory;
+    constructor(vm, s0, cell_size) {
+	this.vm = vm;
+	this.memory = vm.memory;
 	this.s0 = s0;
-	this.sp = s0 + 1; 
+	this.sp_fetch = s0 + 1; 
 	this.cell_size = cell_size;
+	this.stack_limit = 200;
+    }
+
+    empty() {
+	return this.sp_fetch === s0 + 1;
+    }
+
+    push(val) {
+	if(this.sp_fetch - this.s0 >== this.stack_limit) {
+	    console.log("STACK UNDERFLOW!");
+	    this.vm.op_abort();
+	    throw("STACK OVERFLOW: " + val);
+	} else {
+	    this.memory[this.sp_fetch++] = val;
+	}
+    }
+
+    pop() {
+	if(this.empty()) {
+	    console.log("STACK UNDERFLOW!");
+	    this.vm.op_abort();
+	    throw("STACK UNDERFLOW");
+	} else {
+	    let val = this.memory[this.sp_fetch]
+	    this.sp_fetch--;
+	    return val;
+	}
+    }
+
+    clear() {
+	while(this.sp_fetch !== (this.s0 + 1)) {
+	    this.vm.memory[this.sp_fetch] = 0;
+	    this.sp_fetch--;
+	}
+    }
 }
 
 
@@ -112,10 +143,11 @@ class ForthVM {
     
 
     constructor() {
-	this.stack = [];
-	this.rstack = [];
 	this.memory = new Uint32Array(65536);
 	this.byteView = new Uint8Array(this.memory.buffer);
+	this.stack = new Stack(this, );
+	this.rstack = new Stack(this, );
+
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
 	this.ip = 0; // program counter, current interp address
 	this.eax; // register for current value
@@ -155,7 +187,7 @@ class ForthVM {
     }
 
     writeUint32(u) {
-	this.memory[this.ip] = u
+	this.memory[this.ip] = u;
 	this.ip++;
     }
 
@@ -173,7 +205,7 @@ class ForthVM {
     }
 
     addPrimitives() {
-	this.defcode(0, 'SWAP', OpCode.OP_SWAP)
+	this.defcode(0, 'SWAP', OpCode.OP_SWAP);
 	
     }
 
