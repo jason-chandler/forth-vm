@@ -72,12 +72,59 @@ class Debug {
     }
 }
 
-class Header {
-    
+class Head {
+    vm;
+    name;
+    address;
+    link;
+
+    constructor(vm, name) {
+	this.vm = vm;
+	this.name = name;
+    }
+
+    writeName() {
+	this.vm.writeCountedString(this.name);
+    }
+
+    makeLink() {
+	this.link = this.vm.latest
+	this.vm.writeUint32(this.link);
+	this.vm.latest = this.address;
+    }
+
+    write() {
+	this.address = this.vm.ip;
+	this.writeName();
+	this.makeLink();
+    }
 }
 
 class Word {
+    vm;
+    head;
+    immediate;
+    xt;
 
+    constructor(vm, name, immediate, codeWord, body) {
+	this.vm = vm;
+	this.head = new Head(vm, name);
+	this.immediate = immediate;
+	this.codeWord = codeWord;
+	this.body = body;
+
+	this.write();
+    }
+
+    write() {
+	this.head.write();
+	this.vm.writeUint32(this.immediate);
+	if(this.codeWord === 0) { // code, not high level Forth
+	    this.vm.writeUint32(this.body);
+	} else {
+	}
+	this.vm.writeUint32(OpCode.OP_EXIT);
+    }
 }
 
 
@@ -102,9 +149,9 @@ class Stack {
     }
 
     push(val) {
-	if(this.sp_fetch - this.s0 >== this.stack_limit) {
-	    console.log("STACK UNDERFLOW!");
-	    this.vm.op_abort();
+	if(this.sp_fetch - this.s0 >= this.stack_limit) {
+	    console.log("STACK OVERFLOW: " + val);
+	    this.vm.quit();
 	    throw("STACK OVERFLOW: " + val);
 	} else {
 	    this.memory[this.sp_fetch++] = val;
@@ -113,9 +160,9 @@ class Stack {
 
     pop() {
 	if(this.empty()) {
-	    console.log("STACK UNDERFLOW!");
-	    this.vm.op_abort();
-	    throw("STACK UNDERFLOW");
+	    console.log("STACK UNDERFLOW");
+	    this.vm.quit();
+	    throw("STACK UNDERFLOW: ");
 	} else {
 	    let val = this.memory[this.sp_fetch]
 	    this.sp_fetch--;
@@ -177,13 +224,13 @@ class ForthVM {
 	let tempIp = this.ip * 4;
 	this.writeByte(name.length, tempIp);
 	tempIp++;
-	for(var i = 0; i < name.length; i++) {
+	for(var i = 0; i < Math.min(name.length, 19); i++) {
 	    this.writeByte(name.charCodeAt(i), tempIp);
 	    tempIp++
 	    console.log(name.charCodeAt(i));
 	}
-	// Arbitrary string size limit is 15 because alignment is annoying
-	this.ip += 16;
+	// Arbitrary string size limit is len + 19 because alignment is annoying
+	this.ip += 4;
     }
 
     writeUint32(u) {
@@ -191,21 +238,12 @@ class ForthVM {
 	this.ip++;
     }
 
-    makeLink() {
-	this.writeUint32(this.latest);
-	this.latest = this.ip;
-    }
-
-    defcode(immediate, name, opcode) {
-	this.makeLink(); // link will point to byte-length of string
-	this.writeCountedString(name);
-	this.writeUint32(immediate);
-	this.writeUint32(opcode);
-	this.writeUint32(OpCode.OP_EXIT);
+    defcode(name, immediate, opcode) {
+	new Word(this, name, immediate, 0, opcode);
     }
 
     addPrimitives() {
-	this.defcode(0, 'SWAP', OpCode.OP_SWAP);
+	this.defcode('SWAP', 0, OpCode.OP_SWAP);
 	
     }
 
@@ -250,9 +288,9 @@ class ForthVM {
 	this.offsetIp(1);
     }
 
-    abort() {
-	this.rstack = [];
-	this.stack = [];
+    quit() {
+	this.rstack.clear();
+	this.stack.clear();
     }
 
     rPush(reg) {
