@@ -78,9 +78,10 @@ class Head {
     address;
     link;
 
-    constructor(vm, name) {
+    constructor(vm, name, address) {
 	this.vm = vm;
 	this.name = name;
+	this.address = address;
     }
 
     writeName() {
@@ -90,11 +91,9 @@ class Head {
     makeLink() {
 	this.link = this.vm.latest
 	this.vm.writeUint32(this.link);
-	this.vm.latest = this.address;
     }
 
     write() {
-	this.address = this.vm.ip;
 	this.writeName();
 	this.makeLink();
     }
@@ -103,28 +102,113 @@ class Head {
 class Word {
     vm;
     head;
+    headAddress;
     immediate;
-    xt;
+    immediateAddress;
+    codeWord;
+    cfa;
+    pfa;
+    parameterField;
 
-    constructor(vm, name, immediate, codeWord, body) {
-	this.vm = vm;
-	this.head = new Head(vm, name);
-	this.immediate = immediate;
-	this.codeWord = codeWord;
-	this.body = body;
+    // HEAD
+    // name - regular string in constructors, counted string in memory
+    // link - address of previous word
+    //
+    // BODY
+    // immediate
+    // codeWord
+    // cfa;
+    // parameterField;
 
-	this.write();
+    // New word
+    static newWord(vm, name, immediate, codeWord, parameterField) {
+	let word = new Word();
+	word.vm = vm;
+	word.headAddress = word.vm.ip;
+	word.head = new Head(word.vm, name, word.headAddress);
+	word.head.write();
+	word.immediate = immediate; // is this an immediate word
+	word.codeWord = codeWord;
+	word.parameterField = parameterField;
+	word.writeBody();
+	return word;
     }
 
-    write() {
-	this.head.write();
+    // Existing word
+    static fromDict(vm, address) {
+	let word = new Word();
+	word.vm = vm;
+	word.headAddress = address;
+	let countString = word.vm.readCountedString(word.headAddress);
+	word.head.name = countString[1];
+	let linkLoc = countString[2];
+	word.head.link = word.vm.memory[linkLoc];
+	let immediateAddr = linkLoc + 1;
+	word.immediate = word.vm[immediateAddr];
+	word.cfa = immediate + 1;
+	word.codeWord = word.vm[cfa];
+	word.pfa = word.cfa + 2;
+	return word;
+    }
+
+    writeBody() {
+	this.immediateAddr = this.vm.ip;
 	this.vm.writeUint32(this.immediate);
+	this.cfa = this.vm.ip;
 	if(this.codeWord === 0) { // code, not high level Forth
-	    this.vm.writeUint32(this.body);
+	    this.vm.writeUint32(OpCode.OP_NOOP);
+	    this.vm.writeUint32(this.parameterField);
 	} else {
 	}
 	this.vm.writeUint32(OpCode.OP_EXIT);
+	// keep it hidden until word is defined
+	this.vm.latest = this.address;
     }
+
+    static getNameAndLinkFromAddr(vm, addr) {
+	let countString = vm.readCountedString(addr);
+	let name = countString[1];
+	let link = vm.memory[countString[2]];
+	return [name,link];
+    }
+
+    // Return address or 0
+    static find(vm, name) {
+	if(vm.latest === 0) {
+	    throw("Forth VM has no definitions!");
+	}
+	let tempAddr = vm.latest;
+	while(tempAddr !== 0) {
+	    let check = this.getNameAndLinkFromAddr(vm, tempAddr);
+	    let tempName = check[0];
+	    let tempLink = check[1];
+	    if(tempName === name) {
+		return tempAddr;
+	    } else {
+		tempAddr = tempLink;
+	    }
+	}
+	return tempAddr;
+    }
+
+    static findWord(vm, name) {
+	let addr = Word.find(vm, name);
+	if (addr === 0) {
+	    return 0;
+	} else {
+	    return Word.fromDict(addr);
+	}
+    }
+
+    static findXt(vm, name) {
+	let wordOrZero = Word.findWord(vm, name);
+	if(wordOrZero !== 0) {
+	    return wordOrZero.cfa;;
+	} else {
+	    vm.abort(name + " ?");
+	}
+    }
+
 }
 
 
@@ -150,7 +234,7 @@ class Stack {
 
     push(val) {
 	if(this.sp_fetch - this.s0 >= this.stack_limit) {
-	    console.log("STACK OVERFLOW: " + val);
+	    this.vm.systemOut.log("STACK OVERFLOW: " + val);
 	    this.vm.quit();
 	    throw("STACK OVERFLOW: " + val);
 	} else {
@@ -160,7 +244,7 @@ class Stack {
 
     pop() {
 	if(this.empty()) {
-	    console.log("STACK UNDERFLOW");
+	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    this.vm.quit();
 	    throw("STACK UNDERFLOW: ");
 	} else {
@@ -187,6 +271,8 @@ class ForthVM {
     cell_size;
     ip;
     latest;
+    sourceId;
+    systemOut;
     
 
     constructor() {
@@ -199,38 +285,67 @@ class ForthVM {
 	this.ip = 0; // program counter, current interp address
 	this.eax; // register for current value
 	this.latest = 0;
+	this.source_id = -1; // -1 for string eval, 0 for file
+	this.systemOut = console; // in case i change output area later;
     }
 
 
     writeByte(b, offset) {
 	this.byteView[offset] = b;
-	console.log('writing ' + b + ' @ ' + offset)
+	this.systemOut.log('writing ' + b + ' @ ' + offset)
     }
 
-    align(offset) {
-	if(offset % 4 === 0) {
-	    return offset / 4;
+    align(offset, write) {
+	if(offset === 0) {
+	    return 0;
+	}
+	if(offset % this.cell_size === 0) {
+	    return offset / this.cell_size;
 	} else {
-	    while(offset % 4 !== 0) {
-		this.writeByte(OpCode.OP_NOOP, offset);
+	    while((this.cell_size - (offset % this.cell_size)) !== this.cell_size) {
+		this.systemOut.log(offset);
+		if(write) {
+		    this.writeByte(OpCode.OP_NOOP, offset);
+		}
 		offset++;
 	    }
 	}
-	return offset / 4;
+	return offset / this.cell_size;
+    }
+
+    writeAlign(offset) {
+	return this.align(offset, true);
+    }
+
+    readAlign(offset) {
+	return this.align(offset, false);
     }
 
     // Write a counted string and then align to cell size
     writeCountedString(name) {
-	let tempIp = this.ip * 4;
-	this.writeByte(name.length, tempIp);
+	let tempIp = this.ip * this.cell_size;
+	let truncLength = Math.min(name.length, 255);
+	this.writeByte(truncLength, tempIp);
 	tempIp++;
-	for(var i = 0; i < Math.min(name.length, 19); i++) {
+	for(var i = 0; i < truncLength; i++) {
 	    this.writeByte(name.charCodeAt(i), tempIp);
 	    tempIp++
-	    console.log(name.charCodeAt(i));
+	    this.systemOut.log(name.charCodeAt(i));
 	}
-	// Arbitrary string size limit is len + 19 because alignment is annoying
-	this.ip += 4;
+	// Make sure we line back up with cell size
+	this.ip = this.writeAlign(tempIp);
+    }
+
+    readCountedString(address) {
+	let byteAddress = address * this.cell_size;
+	// Max length is 255
+	let len = this.byteView[byteAddress];
+	byteAddress++;
+	let str = '';
+	for(var i = 0; i < len; i++) {
+	    str += String.fromCharCode(this.byteView[byteAddress + i]);
+	}
+	return [len, str, this.readAlign(byteAddress)]; // 
     }
 
     writeUint32(u) {
@@ -239,7 +354,7 @@ class ForthVM {
     }
 
     defcode(name, immediate, opcode) {
-	new Word(this, name, immediate, 0, opcode);
+	Word.newWord(this, name, immediate, 0, opcode);
     }
 
     addPrimitives() {
@@ -255,17 +370,11 @@ class ForthVM {
 	this.offsetIp(1);
     }
 
-    // load up an address to jump to and move the pointer forward
-    loadAddress() {
-	this.eax = this.memory[this.ip];
-	this.offsetIp(1);
-    }
-
     //inline param
     pushFloat32() {
 	this.offsetIp(1);
 	this.push(new Float32Array(this.memory.buffer, this.ip * 4, 1)[0]);
-	this.offsetip(1)
+	this.offsetIp(1)
     }
     
     //inline param
@@ -288,9 +397,21 @@ class ForthVM {
 	this.offsetIp(1);
     }
 
+    readFromInput() {
+
+    }
+
     quit() {
 	this.rstack.clear();
 	this.stack.clear();
+	this.readFromInput();
+    }
+
+    abort(msg) {
+	if(msg !== undefined && msg !== null) {
+	    this.systemOut.log(msg);
+	}
+	this.quit();
     }
 
     rPush(reg) {
@@ -301,7 +422,7 @@ class ForthVM {
 	if(this.rstack.length !== 0) {
 	    return this.rstack.pop();
 	} else {
-	    console.log("RSTACK UNDERFLOW");
+	    this.systemOut.log("RSTACK UNDERFLOW");
 	    this.abort();
 	}
     }
@@ -314,7 +435,7 @@ class ForthVM {
 	if(this.stack.length !== 0) {
 	    return this.stack.pop();
 	} else {
-	    console.log("STACK UNDERFLOW");
+	    this.systemOut.log("STACK UNDERFLOW");
 	    this.abort();
 	}
     }
@@ -332,7 +453,7 @@ class ForthVM {
 	
     exit() {
 	this.ip = this.rPop();
-	this.next();
+	return;
     }
 
     toR() {
