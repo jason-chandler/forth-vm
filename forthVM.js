@@ -38,12 +38,14 @@ class OpCode {
     static OP_RPOP = 7;
     static OP_PUSH = 8;
     static OP_POP = 9;
-    static OP_ADD = 10;
-    static OP_SUB = 11;
-    static OP_DIV = 12;
-    static OP_MUL = 13;
+    static OP_PLUS = 10;
+    static OP_MINUS = 11;
+    static OP_SLASH = 12;
+    static OP_STAR = 13;
     static OP_MOD = 14;
     static OP_DUP = 15;
+    static OP_BYE = 16;
+    static OP_EXIT = 17;
 }
 
 class Debug {
@@ -135,19 +137,28 @@ class Word {
     }
 
     // Existing word
-    static fromDict(vm, address) {
+    static fromDict(vm, name, address) {
 	let word = new Word();
 	word.vm = vm;
 	word.headAddress = address;
+	word.head = new Head(word.vm, name, word.headAddress);
 	let countString = word.vm.readCountedString(word.headAddress);
 	word.head.name = countString[1];
 	let linkLoc = countString[2];
 	word.head.link = word.vm.memory[linkLoc];
-	let immediateAddr = linkLoc + 1;
-	word.immediate = word.vm[immediateAddr];
-	word.cfa = immediate + 1;
-	word.codeWord = word.vm[cfa];
+	word.immediateAddress = linkLoc + 1;
+	word.vm.systemOut.log('immediate Addr ' + word.immediateAddress);
+	word.immediate = word.vm.memory[word.immediateAddress];
+	word.vm.systemOut.log('immediate ' + word.immediate);
+	word.cfa = word.immediateAddress + 1;
+	word.codeWord = word.vm.memory[word.cfa];
 	word.pfa = word.cfa + 2;
+	word.parameterField = [];
+	let pp = word.pfa;
+	while((word.vm.memory[pp] !== OpCode.OP_EXIT) && word.vm.memory[pp] !== undefined) {
+	    word.parameterField.push(word.vm.memory[pp]);
+	    pp++;
+	}
 	return word;
     }
 
@@ -162,7 +173,7 @@ class Word {
 	}
 	this.vm.writeUint32(OpCode.OP_EXIT);
 	// keep it hidden until word is defined
-	this.vm.latest = this.address;
+	this.vm.latest = this.headAddress;
     }
 
     static getNameAndLinkFromAddr(vm, addr) {
@@ -182,7 +193,7 @@ class Word {
 	    let check = this.getNameAndLinkFromAddr(vm, tempAddr);
 	    let tempName = check[0];
 	    let tempLink = check[1];
-	    if(tempName === name) {
+	    if(tempName.toLocaleUpperCase() === name.toLocaleUpperCase()) {
 		return tempAddr;
 	    } else {
 		tempAddr = tempLink;
@@ -192,20 +203,20 @@ class Word {
     }
 
     static findWord(vm, name) {
-	let addr = Word.find(vm, name);
+	let addr = Word.find(vm, name.toLocaleUpperCase());
 	if (addr === 0) {
 	    return 0;
 	} else {
-	    return Word.fromDict(addr);
+	    return Word.fromDict(vm, name.toLocaleUpperCase(), addr);
 	}
     }
 
     static findXt(vm, name) {
-	let wordOrZero = Word.findWord(vm, name);
+	let wordOrZero = Word.findWord(vm, name.toLocaleUpperCase());
 	if(wordOrZero !== 0) {
 	    return wordOrZero.cfa;;
 	} else {
-	    vm.abort(name + " ?");
+	    vm.abort(name.toLocaleUpperCase() + " ?");
 	}
     }
 
@@ -271,7 +282,7 @@ class ForthVM {
     cell_size;
     ip;
     latest;
-    sourceId;
+    source_id;
     systemOut;
     
 
@@ -282,11 +293,12 @@ class ForthVM {
 	this.rstack = new Stack(this, );
 
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
-	this.ip = 0; // program counter, current interp address
+	this.ip = 1; // program counter, current interp address
 	this.eax; // register for current value
 	this.latest = 0;
 	this.source_id = -1; // -1 for string eval, 0 for file
 	this.systemOut = console; // in case i change output area later;
+	this.addPrimitives();
     }
 
 
@@ -302,15 +314,19 @@ class ForthVM {
 	if(offset % this.cell_size === 0) {
 	    return offset / this.cell_size;
 	} else {
-	    while((this.cell_size - (offset % this.cell_size)) !== this.cell_size) {
-		this.systemOut.log(offset);
-		if(write) {
+	    // if we're writing, put down some nullops til we get there
+	    if(write) {	
+		while(offset % this.cell_size !== 0) {
+		    this.systemOut.log(offset);
 		    this.writeByte(OpCode.OP_NOOP, offset);
+		    offset++;
 		}
-		offset++;
+	    } else {
+		// if we're just reading, skip ahead
+		offset += (this.cell_size - (offset % this.cell_size))
 	    }
+	    return offset / this.cell_size;
 	}
-	return offset / this.cell_size;
     }
 
     writeAlign(offset) {
@@ -321,9 +337,23 @@ class ForthVM {
 	return this.align(offset, false);
     }
 
+    getByteAddress(addr) {
+	return addr * this.cell_size;
+    }
+
+    find(name) {
+	return Word.findWord(this, name);
+    }
+
+    tick() {
+	let name = this.parse();
+	this.push(Word.findXt(this, name));
+    }
+
     // Write a counted string and then align to cell size
-    writeCountedString(name) {
-	let tempIp = this.ip * this.cell_size;
+    writeCountedString(name, addr) {
+	if (addr === undefined) { addr = this.ip };
+	let tempIp = this.getByteAddress(addr);
 	let truncLength = Math.min(name.length, 255);
 	this.writeByte(truncLength, tempIp);
 	tempIp++;
@@ -334,16 +364,20 @@ class ForthVM {
 	}
 	// Make sure we line back up with cell size
 	this.ip = this.writeAlign(tempIp);
+	this.systemOut.log('aligned address after write is ' + this.ip)
+	this.systemOut.log('it contains ' + this.memory[this.ip]);
     }
 
-    readCountedString(address) {
-	let byteAddress = address * this.cell_size;
+    readCountedString(addr) {
+	if ( addr === undefined) { addr = this.ip };
+	let byteAddress = this.getByteAddress(addr);
 	// Max length is 255
 	let len = this.byteView[byteAddress];
 	byteAddress++;
 	let str = '';
 	for(var i = 0; i < len; i++) {
-	    str += String.fromCharCode(this.byteView[byteAddress + i]);
+	    str += String.fromCharCode(this.byteView[byteAddress]);
+	    byteAddress++
 	}
 	return [len, str, this.readAlign(byteAddress)]; // 
     }
@@ -359,6 +393,14 @@ class ForthVM {
 
     addPrimitives() {
 	this.defcode('SWAP', 0, OpCode.OP_SWAP);
+	this.defcode('BYE', 0, OpCode.OP_BYE);
+	this.defcode('+', 0, OpCode.OP_PLUS);
+	this.defcode('-', 0, OpCode.OP_MINUS);
+	this.defcode('*', 0, OpCode.OP_STAR);
+	this.defcode('/', 0, OpCode.OP_SLASH);
+	this.defcode('%', 0, OpCode.OP_MOD);
+	this.defcode('>R', 0, OpCode.OP_TO_R);
+	this.defcode('R>', 0, OpCode.OP_R_TO);
 	
     }
 
@@ -448,7 +490,7 @@ class ForthVM {
 	let dest = this.memory[this.ip];
 	this.ip++;
 	this.rPush(ip);
-	jmp(dest);
+	this.jmp(dest);
     }
 	
     exit() {
@@ -464,7 +506,36 @@ class ForthVM {
 	this.push(this.rPop());
     }
 
-	
+    plus() {
+	let b = this.pop();
+	let a = this.pop();
+	this.push(a+b);
+    }
+
+    minus() {
+	let b = this.pop();
+	let a = this.pop();
+	this.push(a-b);
+    }
+
+    star() {
+	let b = this.pop();
+	let a = this.pop();
+	this.push(a*b);
+    }
+
+    slash() {
+	let b = this.pop();
+	let a = this.pop();
+	this.push(Math.floor(a/b));
+    }
+
+    mod() {
+	let b = this.pop();
+	let a = this.pop();
+	this.push(a%b);
+    }	
+
 
     engine() {
 	while(this.memory[this.ip] !== OpCode.OP_BYE) {
@@ -474,147 +545,70 @@ class ForthVM {
 		break;
 	    case OpCode.OP_ENTER:
 		this.enter()
-	    case OP_PUSH_UINT32:
+	    case OpCode.OP_PUSH_UINT32:
 		this.pushUint32();
 		break;
-	    case OP_PUSH_FLOAT32:
+	    case OpCode.OP_PUSH_FLOAT32:
 		this.pushFloat32();
 		break;
-	    case OP_PUSH_DOUBLE:
+	    case OpCode.OP_PUSH_DOUBLE:
 		this.pushDouble();
 		break;
-	    case OP_TO_R:
+	    case OpCode.OP_TO_R:
 		this.rPush();
 		break;
-	    case OP_R_TO:
+	    case OpCode.OP_R_TO:
 		this.rPop();
 		break;
-	    case OP_PUSH:
+	    case OpCode.OP_PUSH:
 		this.push();
 		break;
-	    case OP_POP:
+	    case OpCode.OP_POP:
 		this.pop();
 		break;
-	    case OP_ADD:
-		this.add();
+	    case OpCode.OP_SWAP:
+		this.swap();
+		break
+	    case OpCode.OP_PLUS:
+		this.plus();
 		break;
-	    case OP_SUB:
-		this.sub();
+	    case OpCode.OP_MINUS:
+		this.minus();
 		break;
-	    case OP_DIV:
-		this.div();
+	    case OpCode.OP_SLASH:
+		this.slash();
 		break;
-	    case OP_MUL:
-		this.mul();
+	    case OpCode.OP_STAR:
+		this.star();
 		break;
-	    case OP_MOD:
+	    case OpCode.OP_MOD:
 		this.mod();
 		break;
-	    case OP_GREATER:
+	    case OpCode.OP_GREATER:
 		this.greater();
 		break;
-	    case OP_GREATER_EQ:
+	    case OpCode.OP_GREATER_EQ:
 		this.greaterEq();
 		break;
-	    case OP_EQ:
+	    case OpCode.OP_EQ:
 		this.eq();
 		break;
-	    case OP_LESS:
+	    case OpCode.OP_LESS:
 		this.less();
 		break;
-	    case OP_LESS_EQ:
+	    case OpCode.OP_LESS_EQ:
 		this.lessEq();
 		break;
-	    case OP_ZERO_EQ:
+	    case OpCode.OP_ZERO_EQ:
 		this.zeroEq();
 		break;
-	    case OP_ZERO_LESS:
+	    case OpCode.OP_ZERO_LESS:
 		this.zeroLess();
 		break;
 
 	    }
 	}
     }
-
-    
-/*
-    
-    putByteHere(b) {
-	this.memory_bytes[this.ip] = b;
-	this.ip++;
-    }
-
-    
-    writeCountedStringHere(name) {
-	this.putByteHere(name.length);
-	for(var i = 0; i < name.length; i++) {
-	    this.putByteHere(name.charCodeAt(i));
-	}
-    }
-
-
-    addPrimitiveToDictionary(name, prim_code) {
-	writeCountedStringHere(name);
-	this.putByteHere(1);
-	this.putByteHere(prim_code);
-    }
-
-    readFromAddress(address, instruction) {
-    }
-    
-    readAsFloat32(chunk1, chunk2, chunk3, chunk4) {
-	let chunks = [chunk1, chunk2, chunk3, chunk4];
-	let b = new ArrayBuffer(4);
-	let intermediate = new Uint8Array(b);
-	for(var i = 0; i < 4; i ++) {
-	    intermediate[i] = chunks[i];
-	}
-	return new Float32Array(b)[0];
-    }
-
-    
-
-    OP_DOPRIM() {
-	this.ip++;
-	this.OpCode[this.memory_bytes[ip]].call();
-	this.NEXT();
-    }
-
-    OP_NOOP() {
-    }
-
-    OP_JMP_EAX() {
-	
-    }
-
-    NEXT() {
-	// Load memory at program counter into eax
-	this.eax = memory_bytes[this.ip];
-	this.ip++;
-	this.OP_JMP_EAX();
-	return;
-    }
-
-    OP_PUSHRSP() {
-	// Push program counter's address onto the return stack
-	rstack.push(this.memory_bytes[this.ip]);
-    }
-
-    OP_POPRSP() {
-	return rstack.pop();
-    }
-
-    OP_DOCOL() {
-	this.OP_PUSHRSP();
-	this.eax += cell_size;
-	this.ip = this.eax;
-    }
-
-    
-*/
-    
-		
-
 };
 
 
