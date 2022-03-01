@@ -278,6 +278,7 @@ class ForthVM {
     stack;
     rstack;
     eax;
+    memory_size;
     memory;
     cell_size;
     ip;
@@ -287,12 +288,13 @@ class ForthVM {
     
 
     constructor() {
-	this.memory = new Uint32Array(65536);
-	this.byteView = new Uint8Array(this.memory.buffer);
-	this.stack = new Stack(this, );
-	this.rstack = new Stack(this, );
-
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
+	this.memory_size = 65536;
+	this.memory = new Uint32Array(this.memorySize);
+	this.byteView = new Uint8Array(this.memory.buffer);
+	this.stack = new Stack(this, this.memorySize - 402, this.cell_size);
+	this.rstack = new Stack(this, this.memorySize - 201, this.cell_size);
+
 	this.ip = 1; // program counter, current interp address
 	this.eax; // register for current value
 	this.latest = 0;
