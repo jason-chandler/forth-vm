@@ -174,6 +174,7 @@ class Word {
 	this.vm.writeUint32(OpCode.OP_EXIT);
 	// keep it hidden until word is defined
 	this.vm.latest = this.headAddress;
+	this.vm.dp = this.vm.ip;
     }
 
     static getNameAndLinkFromAddr(vm, addr) {
@@ -234,33 +235,31 @@ class Stack {
 	this.vm = vm;
 	this.memory = vm.memory;
 	this.s0 = s0;
-	this.sp_fetch = s0 + 1; 
+	this.sp_fetch = this.s0 - 1; 
 	this.cell_size = cell_size;
 	this.stack_limit = 200;
     }
 
     empty() {
-	return this.sp_fetch === s0 + 1;
+	return this.sp_fetch === this.s0 - 1;
     }
 
     push(val) {
-	if(this.sp_fetch - this.s0 >= this.stack_limit) {
+	if(this.s0 - this.sp_fetch >= this.stack_limit) {
 	    this.vm.systemOut.log("STACK OVERFLOW: " + val);
-	    this.vm.quit();
 	    throw("STACK OVERFLOW: " + val);
 	} else {
-	    this.memory[this.sp_fetch++] = val;
+	    this.memory[this.sp_fetch--] = val;
 	}
     }
 
     pop() {
 	if(this.empty()) {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
-	    this.vm.quit();
 	    throw("STACK UNDERFLOW: ");
 	} else {
+	    this.sp_fetch++
 	    let val = this.memory[this.sp_fetch]
-	    this.sp_fetch--;
 	    return val;
 	}
     }
@@ -282,25 +281,33 @@ class ForthVM {
     memory;
     cell_size;
     ip;
+    dp;
     latest;
     source_id;
     systemOut;
+    engineInterval;
+    inputInterval;
+    state;
+    pad;
     
 
     constructor() {
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
 	this.memory_size = 65536;
-	this.memory = new Uint32Array(this.memorySize);
+	this.memory = new Uint32Array(this.memory_size);
 	this.byteView = new Uint8Array(this.memory.buffer);
-	this.stack = new Stack(this, this.memorySize - 402, this.cell_size);
-	this.rstack = new Stack(this, this.memorySize - 201, this.cell_size);
+	this.stack = new Stack(this, this.memory_size - 402, this.cell_size);
+	this.rstack = new Stack(this, this.memory_size - 201, this.cell_size);
 
 	this.ip = 1; // program counter, current interp address
+	this.dp = 1;
 	this.eax; // register for current value
 	this.latest = 0;
 	this.source_id = -1; // -1 for string eval, 0 for file
 	this.systemOut = console; // in case i change output area later;
 	this.addPrimitives();
+	this.state = 0; // interpret mode
+	this.refreshPad();
     }
 
 
@@ -414,6 +421,10 @@ class ForthVM {
 	this.offsetIp(1);
     }
 
+    refreshPad() {
+	this.pad = this.ip + 200;
+    }
+
     //inline param
     pushFloat32() {
 	this.offsetIp(1);
@@ -441,14 +452,46 @@ class ForthVM {
 	this.offsetIp(1);
     }
 
-    readFromInput() {
+    pushFalse() {
+	this.push(0);
+    }
 
+    pushTrue() {
+	this.push(-1);
+    }
+
+    dump() {
+	let numCells = this.stack.pop();
+	this.systemOut.log(numCells);
+	let startingAddr = this.stack.pop();
+	this.systemOut.log(startingAddr);
+	let tempBuff = [];
+	for(var i = 0; i < numCells; i++) {
+	    tempBuff.push(this.memory[startingAddr + i]);
+	}
+	this.systemOut.log(tempBuff);
+    }
+
+    dumpc() {
+	let numBytes = this.stack.pop();
+	let startingAddr = this.stack.pop();
+	let tempBuff = [];
+	for(var i = 0; i < numBytes; i++) {
+	    tempBuff.push(this.byteView[startingAddr + i]);
+	}
+	this.systemOut.log(tempBuff);
+    }
+
+    refill() {
+	if(this.parseBuffer.length !== 0) {
+	    
+	}
     }
 
     quit() {
 	this.rstack.clear();
 	this.stack.clear();
-	this.readFromInput();
+	this.inputInterval = setInterval(this.refill(), 10);
     }
 
     abort(msg) {
@@ -541,74 +584,78 @@ class ForthVM {
 
     engine() {
 	while(this.memory[this.ip] !== OpCode.OP_BYE) {
-	    switch(this.memory[this.ip]) {
-	    case OpCode.OP_NOOP:
-		this.noOp();
-		break;
-	    case OpCode.OP_ENTER:
-		this.enter()
-	    case OpCode.OP_PUSH_UINT32:
-		this.pushUint32();
-		break;
-	    case OpCode.OP_PUSH_FLOAT32:
-		this.pushFloat32();
-		break;
-	    case OpCode.OP_PUSH_DOUBLE:
-		this.pushDouble();
-		break;
-	    case OpCode.OP_TO_R:
-		this.rPush();
-		break;
-	    case OpCode.OP_R_TO:
-		this.rPop();
-		break;
-	    case OpCode.OP_PUSH:
-		this.push();
-		break;
-	    case OpCode.OP_POP:
-		this.pop();
-		break;
-	    case OpCode.OP_SWAP:
-		this.swap();
-		break
-	    case OpCode.OP_PLUS:
-		this.plus();
-		break;
-	    case OpCode.OP_MINUS:
-		this.minus();
-		break;
-	    case OpCode.OP_SLASH:
-		this.slash();
-		break;
-	    case OpCode.OP_STAR:
-		this.star();
-		break;
-	    case OpCode.OP_MOD:
-		this.mod();
-		break;
-	    case OpCode.OP_GREATER:
-		this.greater();
-		break;
-	    case OpCode.OP_GREATER_EQ:
-		this.greaterEq();
-		break;
-	    case OpCode.OP_EQ:
-		this.eq();
-		break;
-	    case OpCode.OP_LESS:
-		this.less();
-		break;
-	    case OpCode.OP_LESS_EQ:
-		this.lessEq();
-		break;
-	    case OpCode.OP_ZERO_EQ:
-		this.zeroEq();
-		break;
-	    case OpCode.OP_ZERO_LESS:
-		this.zeroLess();
-		break;
-
+	    try {
+		switch(this.memory[this.ip]) {
+		case OpCode.OP_NOOP:
+		    this.noOp();
+		    break;
+		case OpCode.OP_ENTER:
+		    this.enter()
+		case OpCode.OP_PUSH_UINT32:
+		    this.pushUint32();
+		    break;
+		case OpCode.OP_PUSH_FLOAT32:
+		    this.pushFloat32();
+		    break;
+		case OpCode.OP_PUSH_DOUBLE:
+		    this.pushDouble();
+		    break;
+		case OpCode.OP_TO_R:
+		    this.rPush();
+		    break;
+		case OpCode.OP_R_TO:
+		    this.rPop();
+		    break;
+		case OpCode.OP_PUSH:
+		    this.push();
+		    break;
+		case OpCode.OP_POP:
+		    this.pop();
+		    break;
+		case OpCode.OP_SWAP:
+		    this.swap();
+		    break
+		case OpCode.OP_PLUS:
+		    this.plus();
+		    break;
+		case OpCode.OP_MINUS:
+		    this.minus();
+		    break;
+		case OpCode.OP_SLASH:
+		    this.slash();
+		    break;
+		case OpCode.OP_STAR:
+		    this.star();
+		    break;
+		case OpCode.OP_MOD:
+		    this.mod();
+		    break;
+		case OpCode.OP_GREATER:
+		    this.greater();
+		    break;
+		case OpCode.OP_GREATER_EQ:
+		    this.greaterEq();
+		    break;
+		case OpCode.OP_EQ:
+		    this.eq();
+		    break;
+		case OpCode.OP_LESS:
+		    this.less();
+		    break;
+		case OpCode.OP_LESS_EQ:
+		    this.lessEq();
+		    break;
+		case OpCode.OP_ZERO_EQ:
+		    this.zeroEq();
+		    break;
+		case OpCode.OP_ZERO_LESS:
+		    this.zeroLess();
+		    break;
+		}
+	    } catch (e) {
+		this.systemOut.log('Error: ' + e);
 	    }
+	    
 	}
     }
 };
