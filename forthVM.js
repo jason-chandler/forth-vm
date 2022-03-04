@@ -30,10 +30,10 @@ class OpCode {
     static {}
     static OP_NOOP = 0;
     static OP_JMP = 1;
-    static OP_SWAP = 2;
-    static OP_LOAD_UINT32 = 3;
-    static OP_LOAD_FLOAT32 = 4;
-    static OP_LOAD_DOUBLE = 5;
+    static OP_DO_NLIT = 2;
+    static OP_DO_ULIT = 3;
+    static OP_DO_FLIT = 4;
+    static OP_DO_DLIT = 5;
     static OP_RPUSH = 6;
     static OP_RPOP = 7;
     static OP_PUSH = 8;
@@ -46,6 +46,9 @@ class OpCode {
     static OP_DUP = 15;
     static OP_BYE = 16;
     static OP_EXIT = 17;
+    static OP_ENTER = 18;
+    static OP_SWAP = 19;
+    static OP_CALL = 20;
 }
 
 class Debug {
@@ -152,12 +155,17 @@ class Word {
 	word.vm.systemOut.log('immediate ' + word.immediate);
 	word.cfa = word.immediateAddress + 1;
 	word.codeWord = word.vm.memory[word.cfa];
-	word.pfa = word.cfa + 2;
+	word.vm.systemOut.log('word.codeWord = ' + word.codeWord);
+	word.pfa = word.cfa + 1;
 	word.parameterField = [];
 	let pp = word.pfa;
-	while((word.vm.memory[pp] !== OpCode.OP_EXIT) && word.vm.memory[pp] !== undefined) {
+	if(word.codeWord === OpCode.OP_CALL) {
 	    word.parameterField.push(word.vm.memory[pp]);
-	    pp++;
+	} else {
+	    while((word.vm.memory[pp] !== Word.findXt(word.vm, 'EXIT')) && word.vm.memory[pp] !== undefined) {
+		word.parameterField.push(word.vm.memory[pp]);
+		pp++;
+	    }
 	}
 	return word;
     }
@@ -166,12 +174,12 @@ class Word {
 	this.immediateAddr = this.vm.ip;
 	this.vm.writeUint32(this.immediate);
 	this.cfa = this.vm.ip;
-	if(this.codeWord === 0) { // code, not high level Forth
-	    this.vm.writeUint32(OpCode.OP_NOOP);
+	if(this.codeWord === OpCode.OP_CALL) { // code, not high level Forth
+	    this.vm.writeUint32(OpCode.OP_CALL);
 	    this.vm.writeUint32(this.parameterField);
 	} else {
+	    this.vm.writeUint32(Word.findXt('EXIT')); // end with exit
 	}
-	this.vm.writeUint32(OpCode.OP_EXIT);
 	// keep it hidden until word is defined
 	this.vm.latest = this.headAddress;
 	this.vm.dp = this.vm.ip;
@@ -395,12 +403,14 @@ class ForthVM {
 	this.memory[this.ip] = u;
 	this.ip++;
     }
+    
 
     defcode(name, immediate, opcode) {
-	Word.newWord(this, name, immediate, 0, opcode);
+	Word.newWord(this, name, immediate, OpCode.OP_CALL, opcode);
     }
 
     addPrimitives() {
+	this.defcode('EXIT', 0, OpCode.OP_EXIT);
 	this.defcode('SWAP', 0, OpCode.OP_SWAP);
 	this.defcode('BYE', 0, OpCode.OP_BYE);
 	this.defcode('+', 0, OpCode.OP_PLUS);
@@ -410,7 +420,11 @@ class ForthVM {
 	this.defcode('%', 0, OpCode.OP_MOD);
 	this.defcode('>R', 0, OpCode.OP_TO_R);
 	this.defcode('R>', 0, OpCode.OP_R_TO);
-	
+	this.defcode('ENTER', 0, OpCode.OP_ENTER);
+	this.defcode(':', 0, OpCode.OP_COLON);
+	this.defcode(';', 1, OpCode.OP_SEMICOLON);
+	this.defcode('DOLIT', 0, OpCode.OP_DOLIT);
+	this.defcode('DOFLIT', 0, OpCode.OP_DOFLIT);
     }
 
     offsetIp(numCells) {
@@ -433,7 +447,7 @@ class ForthVM {
     }
     
     //inline param
-    pushDouble()  {
+    pushDouble64()  {
 	this.offsetIp(1);
 	this.push(new Float64Array(this.memory.buffer, this.ip * 4, 1)[0]);
 	this.offsetIp(2);
@@ -531,11 +545,178 @@ class ForthVM {
 	this.ip = dest;
     }
 
+    doPrimitive(prim) {
+	switch(prim) {
+	case OpCode.OP_NOOP:
+	    this.noOp();
+	    break;
+	case OpCode.OP_ENTER:
+	    this.enter();
+	    break;
+	case OpCode.OP_DO_ULIT:
+	    this.doULit();
+	    break;
+	case OpCode.OP_DO_LIT:
+	    this.doLit();
+	    break;
+	case OpCode.OP_DO_FLIT:
+	    this.doFLit()
+	    break;
+	case OpCode.OP_DO_DLIT:
+	    this.doDLit();
+	    break;
+	case OpCode.OP_TO_R:
+	    this.rPush();
+	    break;
+	case OpCode.OP_R_TO:
+	    this.rPop();
+	    break;
+	case OpCode.OP_PUSH:
+	    this.push();
+	    break;
+	case OpCode.OP_POP:
+	    this.pop();
+	    break;
+	case OpCode.OP_SWAP:
+	    this.swap();
+	    break
+	case OpCode.OP_PLUS:
+	    this.plus();
+	    break;
+	case OpCode.OP_MINUS:
+	    this.minus();
+	    break;
+	case OpCode.OP_SLASH:
+	    this.slash();
+	    break;
+	case OpCode.OP_STAR:
+	    this.star();
+	    break;
+	case OpCode.OP_MOD:
+	    this.mod();
+	    break;
+	case OpCode.OP_GREATER:
+	    this.greater();
+	    break;
+	case OpCode.OP_GREATER_EQ:
+	    this.greaterEq();
+	    break;
+	case OpCode.OP_EQ:
+	    this.eq();
+	    break;
+	case OpCode.OP_LESS:
+	    this.less();
+	    break;
+	case OpCode.OP_LESS_EQ:
+	    this.lessEq();
+	    break;
+	case OpCode.OP_ZERO_EQ:
+	    this.zeroEq();
+	    break;
+	case OpCode.OP_ZERO_LESS:
+	    this.zeroLess();
+	    break;
+	}
+    }
+
+    call() {
+	this.ip++;
+	let prim = this.memory[this.ip];
+	this.exit();
+	this.doPrimitive(prim);
+    }
+
+    checkForCode() {
+	if(this.memory[this.ip] === OpCode.OP_CALL) {
+	    call();
+	} 
+    }
+
+    doULit() {
+	this.pushUint32();
+    }
+
+    doLit() {
+	this.pushInt32();
+    }
+
+    doFLit() {
+	this.pushFloat32();
+    }
+
+    doDLit() {
+	this.pushDouble64();
+    }
+
+    doVar() {
+	this.stack.push(ip + 1);
+	this.exit();
+    }
+
+    fetch() {
+	let addr = this.stack.pop();
+	this.stack.push(this.memory[addr]);
+    }
+
+    store() {
+	let val = this.stack.pop();
+	let addr = this.stack.pop();
+	this.memory[addr] = val;
+    }
+
+    number(str) {
+	return str.trim() !== '' && Number(str).toString() !== 'NaN';
+    }
+
+    doNumber(str) {
+	if(this.state === 0) {
+	    if(str.startsWith('0x') || str.startsWith('-0x')) {
+		this.stack.push(Number(str));
+	    } else if(str.includes('e')) {
+		this.fstack.push(Number(str));
+	    } else if(str.includes('.')) {
+		this.systemOut.log('Not implemented yet')
+	    } else {
+		this.stack.push(Number(str));
+	    }
+	} else {
+	    if(str.startsWith('0x') || str.startsWith('-0x')) {
+		this.writeUint32(Word.findXt(this, "DOLIT"));
+		this.writeInt32(Number(str));
+	    } else if(str.includes('e')) {
+		this.writeUint32(Word.findXt(this, "DOFLIT"));
+		this.writeFloat32(Number(str));
+	    } else if(str.includes('.')) {
+		this.systemOut.log('Not implemented yet')
+	    } else {
+		this.writeUint32(Word.findXt(this, "DOLIT"));
+		this.writeInt32(Number(str));
+	    }
+	}
+    }
+
+    interpret(str) {
+	let word = this.findWord(str);
+	if(word !== 0) {
+	    this.rPush(ip);
+	    this.jmp(Word.cfa);
+	    while(!this.rstack.empty()) {
+		this.enter();
+	    }
+	} else if (number(str)) {
+	    this.doNumber(str)
+	} else {
+	    this.abort(str + ' ?');
+	}
+    }
+
     enter() {
 	let dest = this.memory[this.ip];
+	// When we jump back, we want the next space
 	this.ip++;
 	this.rPush(ip);
 	this.jmp(dest);
+	checkForCode();
     }
 	
     exit() {
@@ -585,73 +766,7 @@ class ForthVM {
     engine() {
 	while(this.memory[this.ip] !== OpCode.OP_BYE) {
 	    try {
-		switch(this.memory[this.ip]) {
-		case OpCode.OP_NOOP:
-		    this.noOp();
-		    break;
-		case OpCode.OP_ENTER:
-		    this.enter()
-		case OpCode.OP_PUSH_UINT32:
-		    this.pushUint32();
-		    break;
-		case OpCode.OP_PUSH_FLOAT32:
-		    this.pushFloat32();
-		    break;
-		case OpCode.OP_PUSH_DOUBLE:
-		    this.pushDouble();
-		    break;
-		case OpCode.OP_TO_R:
-		    this.rPush();
-		    break;
-		case OpCode.OP_R_TO:
-		    this.rPop();
-		    break;
-		case OpCode.OP_PUSH:
-		    this.push();
-		    break;
-		case OpCode.OP_POP:
-		    this.pop();
-		    break;
-		case OpCode.OP_SWAP:
-		    this.swap();
-		    break
-		case OpCode.OP_PLUS:
-		    this.plus();
-		    break;
-		case OpCode.OP_MINUS:
-		    this.minus();
-		    break;
-		case OpCode.OP_SLASH:
-		    this.slash();
-		    break;
-		case OpCode.OP_STAR:
-		    this.star();
-		    break;
-		case OpCode.OP_MOD:
-		    this.mod();
-		    break;
-		case OpCode.OP_GREATER:
-		    this.greater();
-		    break;
-		case OpCode.OP_GREATER_EQ:
-		    this.greaterEq();
-		    break;
-		case OpCode.OP_EQ:
-		    this.eq();
-		    break;
-		case OpCode.OP_LESS:
-		    this.less();
-		    break;
-		case OpCode.OP_LESS_EQ:
-		    this.lessEq();
-		    break;
-		case OpCode.OP_ZERO_EQ:
-		    this.zeroEq();
-		    break;
-		case OpCode.OP_ZERO_LESS:
-		    this.zeroLess();
-		    break;
-		}
+	
 	    } catch (e) {
 		this.systemOut.log('Error: ' + e);
 	    }
