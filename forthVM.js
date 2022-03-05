@@ -149,16 +149,16 @@ class Word {
 	let linkLoc = countString[2];
 	word.head.link = word.vm.memory[linkLoc];
 	word.immediateAddress = linkLoc + 1;
-	word.vm.systemOut.log('immediate Addr ' + word.immediateAddress);
+	word.vm.debug('immediate Addr ' + word.immediateAddress);
 	word.immediate = word.vm.memory[word.immediateAddress];
-	word.vm.systemOut.log('immediate ' + word.immediate);
+	word.vm.debug('immediate ' + word.immediate);
 	word.cfa = word.immediateAddress + 1;
 	word.codeWord = word.vm.memory[word.cfa];
-	word.vm.systemOut.log('word.codeWord = ' + word.codeWord);
+	word.vm.debug('word.codeWord = ' + word.codeWord);
 	word.pfa = word.cfa + 1;
 	word.parameterField = [];
 	let pp = word.pfa;
-	if(word.codeWord === OpCode.OP_JUMP) {
+	if(word.codeWord === OpCode.OP_JMP) {
 	    word.parameterField.push(word.vm.memory[pp]);
 	} else {
 	    while((word.vm.memory[pp] !== Word.findXt(word.vm, 'EXIT')) && word.vm.memory[pp] !== undefined) {
@@ -166,6 +166,7 @@ class Word {
 		pp++;
 	    }
 	}
+	word.vm.debug('word.parameterField = ' + word.parameterField);
 	return word;
     }
 
@@ -173,8 +174,8 @@ class Word {
 	this.immediateAddr = this.vm.ip;
 	this.vm.writeUint32(this.immediate);
 	this.cfa = this.vm.ip;
-	if(this.codeWord === OpCode.OP_JUMP) { // code, not high level Forth
-	    this.vm.writeUint32(OpCode.OP_JUMP);
+	if(this.codeWord === OpCode.OP_JMP) { // code, not high level Forth
+	    this.vm.writeUint32(OpCode.OP_JMP);
 	    this.vm.writeUint32(this.parameterField);
 	} else {
 	    this.vm.writeUint32(Word.findXt('EXIT')); // end with exit
@@ -319,7 +320,7 @@ class InputQueue {
 	for(var i = 0; i < truncLength; i++) {
 	    this.vm.writeByte(name.charCodeAt(i), this.ip_fetch);
 	    this.ip_fetch--;
-	    this.vm.systemOut.log(name.charCodeAt(i));
+	    this.vm.debug(name.charCodeAt(i));
 	}
     }
 
@@ -374,6 +375,7 @@ class ForthVM {
     inputInterval;
     state;
     pad;
+    debugMode;
     
 
     constructor() {
@@ -395,12 +397,18 @@ class ForthVM {
 	this.addPrimitives();
 	this.state = 0; // interpret mode
 	this.refreshPad();
+	this.debugMode = 0;
     }
 
+    debug(...input) {
+	if(this.debugMode === -1) {
+	    this.systemOut.log(input);
+	}
+    }
 
     writeByte(b, offset) {
 	this.byteView[offset] = b;
-	this.systemOut.log('writing ' + b + ' @ ' + offset)
+	this.debug('writing ' + b + ' @ ' + offset)
     }
 
     align(offset, write) {
@@ -413,7 +421,7 @@ class ForthVM {
 	    // if we're writing, put down some nullops til we get there
 	    if(write) {	
 		while(offset % this.cell_size !== 0) {
-		    this.systemOut.log(offset);
+		    this.debug(offset);
 		    this.writeByte(OpCode.OP_NOOP, offset);
 		    offset++;
 		}
@@ -456,12 +464,12 @@ class ForthVM {
 	for(var i = 0; i < truncLength; i++) {
 	    this.writeByte(name.charCodeAt(i), tempIp);
 	    tempIp++
-	    this.systemOut.log(name.charCodeAt(i));
+	    this.debug(name.charCodeAt(i));
 	}
 	// Make sure we line back up with cell size
 	this.ip = this.writeAlign(tempIp);
-	this.systemOut.log('aligned address after write is ' + this.ip)
-	this.systemOut.log('it contains ' + this.memory[this.ip]);
+	this.debug('aligned address after write is ' + this.ip)
+	this.debug('it contains ' + this.memory[this.ip]);
     }
 
     readCountedString(addr) {
@@ -482,11 +490,19 @@ class ForthVM {
 	this.memory[this.ip] = u;
 	this.ip++;
     }
+
+    clearStacks() {
+	this.rstack.clear();
+	this.stack.clear();
+	this.fstack.clear();
+	this.inputBuffer.clear();
+	this.jstack = [];
+    }
     
 
     defcode(name, immediate, opcode) {
 	// a codeword of 1 will run the next address as a JS primitive lookup
-	Word.newWord(this, name, immediate, OpCode.OP_JUMP, opcode);
+	Word.newWord(this, name, immediate, OpCode.OP_JMP, opcode);
     }
 
     addPrimitives() {
@@ -513,6 +529,13 @@ class ForthVM {
 
     noOp() {
 	this.offsetIp(1);
+    }
+
+    swap() {
+	let a = this.stack.pop();
+	let b = this.stack.pop();
+	this.stack.push(a);
+	this.stack.push(b);
     }
 
     refreshPad() {
@@ -556,9 +579,7 @@ class ForthVM {
 
     dump() {
 	let numCells = this.stack.pop();
-	this.systemOut.log(numCells);
 	let startingAddr = this.stack.pop();
-	this.systemOut.log(startingAddr);
 	let tempBuff = [];
 	for(var i = 0; i < numCells; i++) {
 	    tempBuff.push(this.memory[startingAddr + i]);
@@ -583,16 +604,17 @@ class ForthVM {
     }
 
     quit() {
-	this.rstack.clear();
-	this.stack.clear();
-	this.inputInterval = setInterval(this.refill(), 10);
+	this.clearStacks();
     }
 
     abort(msg) {
 	if(msg !== undefined && msg !== null) {
 	    this.systemOut.log(msg);
+	} else {
+	    msg = 'Abort called at ' + this.ip;
 	}
 	this.quit();
+	throw(msg);
     }
 
     rPush(reg) {
@@ -703,14 +725,12 @@ class ForthVM {
 	this.ip++;
 	let prim = this.memory[this.ip];
 	this.exit();
-	this.systemOut.log('Calling primitive: ' + prim);
+	this.debug('Calling primitive: ' + prim);
 	this.doPrimitive(prim);
     }
 
     checkForCode() {
-	if(this.memory[this.ip] === OpCode.OP_JUMP) {
-	    call();
-	} 
+	return this.memory[this.ip] === OpCode.OP_JMP;
     }
 
     doULit() {
@@ -730,7 +750,7 @@ class ForthVM {
     }
 
     doVar() {
-	this.stack.push(ip + 1);
+	this.stack.push(this.ip + 1);
 	this.exit();
     }
 
@@ -782,35 +802,44 @@ class ForthVM {
     }
 
     processInputBuffer() {
-	let word = this.findWord(str);
-	if(word !== 0) {
-	    this.rPush(ip);
-	    this.jmp(Word.cfa);
-	    while(!this.rstack.empty()) {
-		this.enter();
+	while(!this.inputBuffer.empty()) {
+	    let str = this.inputBuffer.pop();
+	    let word = this.find(str);
+	    if(word !== 0) {
+		this.rPush(this.ip);
+		this.jmp(word.cfa);
+		this.debug('word.cfa: ' + word.cfa);
+		while(!this.rstack.empty()) {
+		    this.enter();
+		}
+	    } else if (this.number(str)) {
+		this.doNumber(str)
+	    } else {
+		this.abort(str + ' ?');
 	    }
-	} else if (number(str)) {
-	    this.doNumber(str)
-	} else {
-	    this.abort(str + ' ?');
 	}
     }
 
     interpret(str) {
 	let split = this.splitAndFilter(str);
-	this.systemOut.log('this is the split:');
+	this.debug('this is the split:' + split);
 	for(var i = 0; i < split.length; i++) {
 	    this.inputBuffer.push(split[i]);
 	}
+	this.engine();
     }
 
     enter() {
 	let dest = this.memory[this.ip];
 	// When we jump back, we want the next space
-	this.ip++;
-	this.rPush(ip);
-	this.jmp(dest);
-	checkForCode();
+	let isCode = this.checkForCode();
+	if(!isCode) {
+	    this.ip++;
+	    this.rPush(this.ip);
+	    this.jmp(dest);
+	} else {
+	    this.call();
+	}
     }
 	
     exit() {
@@ -858,16 +887,16 @@ class ForthVM {
 
 
     engine() {
-	while(true) {
 	    try {
-		if(!this.rstack.empty() || !this.inputBuffer.empty()) {
-		    this.vm.entry();
+		if(!this.rstack.empty()) {
+		    this.enter();
+		} else if (!this.inputBuffer.empty()) {
+		    this.processInputBuffer();
 		}
 	    } catch (e) {
 		this.systemOut.log('Error: ' + e);
 	    }
 	    
-	}
     }
 };
 
