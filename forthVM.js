@@ -274,49 +274,83 @@ class Stack {
     clear() {
 	while(this.sp_fetch !== (this.s0 + 1)) {
 	    this.vm.memory[this.sp_fetch] = 0;
-	    this.sp_fetch--;
+	    this.sp_fetch++;
 	}
     }
 }
 
-class InputBuffer {
+class InputQueue {
     vm;
-    memory;
     i0;
+    tos;
     ip_fetch;
+    to_in;
+    rp;
 
     constructor(vm, address) {
 	this.vm = vm;
-	this.memory = this.vm.memory;
-	this.i0 = 0;
+	// byte-aligned
+	this.i0 = this.vm.getByteAddress(address);
 	this.ip_fetch = this.i0 - 1;
+	this.tos = this.ip_fetch;
+	this.rp = this.ip_fetch;
+	this.to_in = 0;
     }
 
     empty() {
-	return this.ip_fetch === this.i0 - 1;
-    }
-
-    push(val) {
-	this.memory[this.ip_fetch--] = val;
-    }
-
-    pop() {
-	if(this.empty()) {
-	    this.vm.systemOut.log("STACK UNDERFLOW");
-	    throw("STACK UNDERFLOW: ");
-	} else {
-	    this.sp_fetch++;
-	    let val = this.memory[this.sp_fetch];
-	    return val;
-	}
+	return this.ip_fetch === this.i0 - 1 && this.tos === this.ip_fetch;
     }
 
     clear() {
-	while(this.sp_fetch !== (this.s0 + 1)) {
-	    this.vm.memory[this.sp_fetch] = 0;
-	    this.sp_fetch--;
+	this.tos = this.i0 - 1;
+	this.rp = this.i0 - 1;
+	this.to_in = 0;
+	while(this.ip_fetch !== this.i0 - 1) {
+	    this.vm.writeByte(0, this.ip_fetch);
+	    this.ip_fetch++;
 	}
+    }
 
+    push(name) {
+	let truncLength = Math.min(name.length, 255);
+	this.vm.writeByte(truncLength, this.ip_fetch);
+	this.tos = this.ip_fetch;
+	this.ip_fetch--;
+	for(var i = 0; i < truncLength; i++) {
+	    this.vm.writeByte(name.charCodeAt(i), this.ip_fetch);
+	    this.ip_fetch--;
+	    this.vm.systemOut.log(name.charCodeAt(i));
+	}
+    }
+
+    pop() {
+	// Max length is 255
+	if(!this.empty()) {
+	    let len = this.vm.byteView[this.rp];
+	    this.rp--;
+	    this.to_in++;
+	    let str = '';
+	    for(var i = 0; i < len; i++) {
+		str += String.fromCharCode(this.vm.byteView[this.rp]);
+		this.rp--
+		this.to_in++;
+	    }
+	    if(this.rp === this.ip_fetch) {
+		this.clear();
+	    }
+	    return str;
+	} else {
+	    this.vm.systemOut.log('INPUT BUFFER UNDERFLOW');
+	}
+    }
+
+    print() {
+	let addr = this.i0 - 1;
+	while(addr !== this.ip_fetch) {
+	    this.vm.systemOut.log(String.fromCharCode(this.vm.byteView[addr]));
+	    addr--;
+	}
+    }
 
 }
 
@@ -349,9 +383,9 @@ class ForthVM {
 	this.byteView = new Uint8Array(this.memory.buffer);
 	this.stack = new Stack(this, this.memory_size - 603, this.cell_size);
 	this.rstack = new Stack(this, this.memory_size - 402, this.cell_size);
-	this.fstack = new Stack(this.memory_size - 201, this.cell_size);
+	this.fstack = new Stack(this, this.memory_size - 201, this.cell_size);
 	this.jstack = [];
-	this.inputBuffer = new Stack(this.memory_size - 804);
+	this.inputBuffer = new InputQueue(this, this.memory_size - 804);
 	this.ip = 2; // program counter, current interp address
 	this.here = 2;
 	this.eax; // register for current value
@@ -763,8 +797,11 @@ class ForthVM {
     }
 
     interpret(str) {
-	let split = splitAndFilter(str);
-	
+	let split = this.splitAndFilter(str);
+	this.systemOut.log('this is the split:');
+	for(var i = 0; i < split.length; i++) {
+	    this.inputBuffer.push(split[i]);
+	}
     }
 
     enter() {
@@ -823,7 +860,9 @@ class ForthVM {
     engine() {
 	while(true) {
 	    try {
-		if(!this.rstack.empty() || this.
+		if(!this.rstack.empty() || !this.inputBuffer.empty()) {
+		    this.vm.entry();
+		}
 	    } catch (e) {
 		this.systemOut.log('Error: ' + e);
 	    }
