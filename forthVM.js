@@ -46,8 +46,34 @@ class OpCode {
     static OP_DUP = 15;
     static OP_BYE = 16;
     static OP_EXIT = 17;
-    static OP_ENTER = 18;
+    static OP_DOCOL = 18;
     static OP_SWAP = 19;
+    static OP_DUP = 20;
+    static OP_ROT = 21;
+    static OP_MINUS_ROT = 22;
+    static OP_PICK = 23;
+    static OP_NIP = 24;
+    static OP_TUCK = 25;
+    static OP_OVER = 26;
+    static OP_DOT = 27;
+    static OP_DOT_S = 28;
+    static OP_DUMP = 29;
+    static OP_DUMPC = 30;
+    static OP_CREATE = 31;
+    static OP_DOES = 32;
+    static OP_ALIGN = 33;
+    static OP_ALIGNED = 34;
+    static OP_IMMEDIATE = 35;
+    static OP_LBRAC = 36;
+    static OP_RBRAC = 37;
+    static OP_STORE = 38;
+    static OP_FETCH = 39;
+    static OP_SP_FETCH = 40;
+    static OP_EQ = 41;
+    static OP_DOVAR = 42;
+    static OP_DOCON = 43;
+    static OP_BRANCH = 44;
+    static OP_BRANCH_QUESTION = 45;
 }
 
 class Debug {
@@ -125,7 +151,7 @@ class Word {
     // parameterField;
 
     // New word
-    static newWord(vm, name, immediate, codeWord, parameterField) {
+    static newWord(vm, name, immediate, codeWord, parameterField, codeWord2) {
 	let word = new Word();
 	word.vm = vm;
 	word.headAddress = word.vm.ip;
@@ -133,6 +159,7 @@ class Word {
 	word.head.write();
 	word.immediate = immediate; // is this an immediate word
 	word.codeWord = codeWord;
+	word.codeWord2 = codeWord2 === null ? OpCode.NOOP : codeWord2 === undefined ? OpCode.NOOP : codeWord2;
 	word.parameterField = parameterField;
 	word.writeBody();
 	return word;
@@ -153,9 +180,12 @@ class Word {
 	word.immediate = word.vm.memory[word.immediateAddress];
 	word.vm.debug('immediate ' + word.immediate);
 	word.cfa = word.immediateAddress + 1;
+	word.cfa2 = word.cfa + 1;
 	word.codeWord = word.vm.memory[word.cfa];
+	word.codeWord2 = word.vm.memory[word.cfa2];
 	word.vm.debug('word.codeWord = ' + word.codeWord);
-	word.pfa = word.cfa + 1;
+	word.vm.debug('word.codeWord2 = ' + word.codeWord2);
+	word.pfa = word.cfa2 + 1;
 	word.parameterField = [];
 	let pp = word.pfa;
 	if(word.codeWord === OpCode.OP_JMP) {
@@ -176,6 +206,7 @@ class Word {
 	this.cfa = this.vm.ip;
 	if(this.codeWord === OpCode.OP_JMP) { // code, not high level Forth
 	    this.vm.writeUint32(OpCode.OP_JMP);
+	    this.vm.writeUint32(this.codeWord2);
 	    this.vm.writeUint32(this.parameterField);
 	} else {
 	    this.vm.writeUint32(Word.findXt('EXIT')); // end with exit
@@ -236,28 +267,28 @@ class Stack {
     vm;
     memory;
     s0; // below bottom of stack
-    sp_fetch; // stack pointer
+    sp; // stack pointer
     cell_size;
 
     constructor(vm, s0, cell_size) {
 	this.vm = vm;
 	this.memory = vm.memory;
 	this.s0 = s0;
-	this.sp_fetch = this.s0 - 1; 
+	this.sp = this.s0 - 1; 
 	this.cell_size = cell_size;
 	this.stack_limit = 200;
     }
 
     empty() {
-	return this.sp_fetch === this.s0 - 1;
+	return this.sp === this.s0 - 1;
     }
 
     push(val) {
-	if(this.s0 - this.sp_fetch >= this.stack_limit) {
+	if(this.s0 - this.sp >= this.stack_limit) {
 	    this.vm.systemOut.log("STACK OVERFLOW: " + val);
 	    throw("STACK OVERFLOW: " + val);
 	} else {
-	    this.memory[this.sp_fetch--] = val;
+	    this.memory[this.sp--] = val;
 	}
     }
 
@@ -266,16 +297,16 @@ class Stack {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
-	    this.sp_fetch++;
-	    let val = this.memory[this.sp_fetch];
+	    this.sp++;
+	    let val = this.memory[this.sp];
 	    return val;
 	}
     }
 
     clear() {
-	while(this.sp_fetch !== (this.s0 + 1)) {
-	    this.vm.memory[this.sp_fetch] = 0;
-	    this.sp_fetch++;
+	while(this.sp !== (this.s0 + 1)) {
+	    this.vm.memory[this.sp] = 0;
+	    this.sp++;
 	}
     }
 }
@@ -284,7 +315,7 @@ class InputQueue {
     vm;
     i0;
     tos;
-    ip_fetch;
+    ip;
     to_in;
     rp;
 
@@ -292,34 +323,34 @@ class InputQueue {
 	this.vm = vm;
 	// byte-aligned
 	this.i0 = this.vm.getByteAddress(address);
-	this.ip_fetch = this.i0 - 1;
-	this.tos = this.ip_fetch;
-	this.rp = this.ip_fetch;
+	this.ip = this.i0 - 1;
+	this.tos = this.ip;
+	this.rp = this.ip;
 	this.to_in = 0;
     }
 
     empty() {
-	return this.ip_fetch === this.i0 - 1 && this.tos === this.ip_fetch;
+	return this.ip === this.i0 - 1 && this.tos === this.ip;
     }
 
     clear() {
 	this.tos = this.i0 - 1;
 	this.rp = this.i0 - 1;
 	this.to_in = 0;
-	while(this.ip_fetch !== this.i0 - 1) {
-	    this.vm.writeByte(0, this.ip_fetch);
-	    this.ip_fetch++;
+	while(this.ip !== this.i0 - 1) {
+	    this.vm.writeByte(0, this.ip);
+	    this.ip++;
 	}
     }
 
     push(name) {
 	let truncLength = Math.min(name.length, 255);
-	this.vm.writeByte(truncLength, this.ip_fetch);
-	this.tos = this.ip_fetch;
-	this.ip_fetch--;
+	this.vm.writeByte(truncLength, this.ip);
+	this.tos = this.ip;
+	this.ip--;
 	for(var i = 0; i < truncLength; i++) {
-	    this.vm.writeByte(name.charCodeAt(i), this.ip_fetch);
-	    this.ip_fetch--;
+	    this.vm.writeByte(name.charCodeAt(i), this.ip);
+	    this.ip--;
 	    this.vm.debug(name.charCodeAt(i));
 	}
     }
@@ -336,7 +367,7 @@ class InputQueue {
 		this.rp--
 		this.to_in++;
 	    }
-	    if(this.rp === this.ip_fetch) {
+	    if(this.rp === this.ip) {
 		this.clear();
 	    }
 	    return str;
@@ -347,7 +378,7 @@ class InputQueue {
 
     print() {
 	let addr = this.i0 - 1;
-	while(addr !== this.ip_fetch) {
+	while(addr !== this.ip) {
 	    this.vm.systemOut.log(String.fromCharCode(this.vm.byteView[addr]));
 	    addr--;
 	}
@@ -371,8 +402,6 @@ class ForthVM {
     latest;
     source_id;
     systemOut;
-    engineInterval;
-    inputInterval;
     state;
     pad;
     debugMode;
@@ -513,14 +542,43 @@ class ForthVM {
 	this.defcode('-', 0, OpCode.OP_MINUS);
 	this.defcode('*', 0, OpCode.OP_STAR);
 	this.defcode('/', 0, OpCode.OP_SLASH);
-	this.defcode('%', 0, OpCode.OP_MOD);
+	this.defcode('MOD', 0, OpCode.OP_MOD);
 	this.defcode('>R', 0, OpCode.OP_TO_R);
 	this.defcode('R>', 0, OpCode.OP_R_TO);
-	this.defcode('ENTER', 0, OpCode.OP_ENTER);
+	this.defcode('DOCOL', 0, OpCode.OP_DOCOL);
 	this.defcode(':', 0, OpCode.OP_COLON);
 	this.defcode(';', 1, OpCode.OP_SEMICOLON);
 	this.defcode('DOLIT', 0, OpCode.OP_DOLIT);
 	this.defcode('DOFLIT', 0, OpCode.OP_DOFLIT);
+	this.defcode('DUP', 0, OpCode.OP_DUP);
+	this.defcode('DROP', 0, OpCode.OP_DROP);
+	this.defcode('OVER', 0, OpCode.OP_OVER);
+	this.defcode('PICK', 0, OpCode.OP_PICK);
+	this.defcode('NIP', 0, OpCode.OP_NIP);
+	this.defcode('TUCK', 0, OpCode.OP_TUCK);
+	this.defcode('ROT', 0, OpCode.OP_ROT);
+	this.defcode('-ROT', 0, OpCode.OP_MINUS_ROT);
+	this.defcode('.', 0, OpCode.OP_DOT);
+	this.defcode('.S', 0, OpCode.OP_DOT_S);
+	this.defcode('=', 0, OpCode.OP_EQ);
+	this.defcode('!', 0, OpCode.OP_STORE);
+	this.defcode('@', 0, OpCode.OP_FETCH);
+	this.defcode('DOVAR', 0, OpCode.OP_DOVAR);
+	this.defcode('DOCON', 0, OpCode.OP_DOCON);
+	this.defcode('DUMP', 0, OpCode.OP_DUMP);
+	this.defcode('DUMPC', 0, OpCode.OP_DUMPC);
+	this.defcode('CREATE', 0, OpCode.OP_CREATE);
+	this.defcode('DOES>', 0, OpCode.OP_DOES);
+	this.defcode('ALIGN', 0, OpCode.OP_ALIGN);
+	this.defcode('ALIGNED', 0, OpCode.OP_ALIGNED);
+	this.defcode('IMMEDIATE', 1, OpCode.OP_IMMEDIATE);
+	this.defcode('[', 0, OpCode.OP_LBRAC);
+	this.defcode(']', 1, OpCode.OP_RBRAC);
+	this.defcode('!', 0, OpCode.OP_STORE);
+	this.defcode('@', 0, OpCode.OP_FETCH);
+	this.defcode('SP@', 0, OpCode.OP_SP_FETCH);
+	this.defcode('BRANCH', 0, OpCode.OP_BRANCH);
+	this.defcode('BRANCH?', 0, OpCode.OP_BRANCH_QUESTION);
     }
 
     offsetIp(numCells) {
@@ -608,9 +666,7 @@ class ForthVM {
     }
 
     abort(msg) {
-	if(msg !== undefined && msg !== null) {
-	    this.systemOut.log(msg);
-	} else {
+	if(msg === undefined || msg === null) {
 	    msg = 'Abort called at ' + this.ip;
 	}
 	this.quit();
@@ -652,9 +708,16 @@ class ForthVM {
 	case OpCode.OP_NOOP:
 	    this.noOp();
 	    break;
-	case OpCode.OP_ENTER:
-	    this.enter();
+	case OpCode.OP_DOCOL:
+	    this.docol();
 	    break;
+	case OpCode.OP_DOCON:
+	    this.docon();
+	    break;
+	case OpCode.OP_DOVAR:
+	    this.dovar();
+	    break;
+
 	case OpCode.OP_DO_ULIT:
 	    this.doULit();
 	    break;
@@ -681,7 +744,31 @@ class ForthVM {
 	    break;
 	case OpCode.OP_SWAP:
 	    this.swap();
-	    break
+	    break;
+	case OpCode.OP_DUP:
+	    this.dup();
+	    break;
+	case OpCode.OP_DROP:
+	    this.drop();
+	    break;
+	case OpCode.OP_OVER:
+	    this.over();
+	    break;
+	case OpCode.OP_PICK:
+	    this.pick();
+	    break;
+	case OpCode.OP_ROT:
+	    this.rot();
+	    break;
+	case OpCode.OP_MINUS_ROT:
+	    this.minus_rot();
+	    break;
+	case OpCode.OP_NIP:
+	    this.nip();
+	    break;
+	case OpCode.OP_TUCK:
+	    this.tuck();
+	    break;
 	case OpCode.OP_PLUS:
 	    this.plus();
 	    break;
@@ -718,11 +805,33 @@ class ForthVM {
 	case OpCode.OP_ZERO_LESS:
 	    this.zeroLess();
 	    break;
+	case OpCode.OP_BRANCH:
+	    this.branch();
+	    break;
+	case OpCode.OP_BRANCH_QUESTION:
+	    this.branchQuestion();
+	    break;
+	case OpCode.OP_DOT_S:
+	    this.dotS();
+	    break;
+	case OpCode.OP_DOT:
+	    this.dot();
+	    break;
+	case OpCode.OP_FETCH:
+	    this.fetch();
+	    break;
+	case OpCode.OP_SP_FETCH:
+	    this.sp_fetch();
+	    break;
+
+	case OpCode.OP_STORE:
+	    this.store();
+	    break;
 	}
     }
 
     call() {
-	this.ip++;
+	this.ip += 2;
 	let prim = this.memory[this.ip];
 	this.exit();
 	this.debug('Calling primitive: ' + prim);
@@ -754,9 +863,73 @@ class ForthVM {
 	this.exit();
     }
 
+    dot() {
+	this.systemOut.log(this.stack.pop());
+    }
+
+    dotS() {
+	let buf = [];
+	let count = 0;
+	for(var i = this.stack.s0 - 1; i !== this.stack.sp; i--) {
+	    buf.push(this.memory[i]);
+	    count++;
+	}
+	this.systemOut.log('<' + count + '> ' + buf);
+    }
+
+    drop() {
+	this.stack.pop();
+    }
+
+    dup() {
+	this.stack.push(0);
+	this.pick();
+    }
+
+    pick() {
+	let num = this.stack.pop();
+	if(this.stack.sp + num + 1 < this.stack.s0) {
+	    this.stack.push(this.memory[this.stack.sp + num + 1])
+	} else {
+	    this.abort('STACK UNDERFLOW');
+	}
+    }
+
+    rot() {
+	let a = this.stack.pop();
+	this.swap();
+	this.stack.push(a);
+	this.swap();
+    }
+
+    minus_rot() {
+	this.rot();
+	this.rot();
+    }
+
+    over() {
+	this.swap();
+	this.dup();
+	this.minus_rot();
+    }
+
+    nip() {
+	this.swap();
+	this.drop();
+    }
+
+    tuck() {
+	this.dup();
+	this.minus_rot();
+    }
+
     fetch() {
 	let addr = this.stack.pop();
 	this.stack.push(this.memory[addr]);
+    }
+
+    sp_fetch() {
+	this.stack.push(this.stack.sp);
     }
 
     store() {
@@ -797,7 +970,7 @@ class ForthVM {
     }
 
     splitAndFilter(str) {
-	let blankFn = function(word) { return word !== ''; };
+	let blankFn = function(word) { return word !== '' && word !== '\n'; };
 	return str.trim().split(' ').filter(blankFn);
     }
 
@@ -810,7 +983,7 @@ class ForthVM {
 		this.jmp(word.cfa);
 		this.debug('word.cfa: ' + word.cfa);
 		while(!this.rstack.empty()) {
-		    this.enter();
+		    this.docol();
 		}
 	    } else if (this.number(str)) {
 		this.doNumber(str)
@@ -829,17 +1002,26 @@ class ForthVM {
 	this.engine();
     }
 
-    enter() {
+    docol() {
 	let dest = this.memory[this.ip];
 	// When we jump back, we want the next space
 	let isCode = this.checkForCode();
-	if(!isCode) {
+	if(!isCode && dest !== 0) {
 	    this.ip++;
 	    this.rPush(this.ip);
 	    this.jmp(dest);
-	} else {
+	} else if(isCode) {
 	    this.call();
+	} else {
+	    //noop or empty codeword2:
+	    this.ip++;
+	    return;
 	}
+    }
+
+    docon() {
+	// should be pointing to cfa2
+	this.stack.push(this.memory[this.ip + 1]);
     }
 	
     exit() {
@@ -889,10 +1071,11 @@ class ForthVM {
     engine() {
 	    try {
 		if(!this.rstack.empty()) {
-		    this.enter();
+		    this.docol();
 		} else if (!this.inputBuffer.empty()) {
 		    this.processInputBuffer();
 		}
+		this.systemOut.log('ok');
 	    } catch (e) {
 		this.systemOut.log('Error: ' + e);
 	    }
