@@ -503,7 +503,7 @@ class Stack {
     }
 
     clear() {
-	while(this.sp !== (this.s0 + 1)) {
+	while(this.sp !== (this.s0 - 1)) {
 	    this.vm.memory[this.sp] = 0;
 	    this.sp++;
 	}
@@ -1175,6 +1175,9 @@ class ForthVM {
 	    break;
 	case OpCode.OP_BL:
 	    this.bl();
+	    break;
+	case OpCode.OP_EXIT:
+	    this.exit();
 	    break;
 	}
     }
