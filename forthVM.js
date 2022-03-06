@@ -100,6 +100,9 @@ class OpCode {
 	case OpCode.OP_ULIT:
 	    return 'OP_ULIT';
 	    break;
+	case OpCode.OP_EXIT:
+	    return 'OP_EXIT';
+	    break;
 	case OpCode.OP_LIT:
 	    return 'OP_LIT';
 	    break;
@@ -505,6 +508,16 @@ class Stack {
 	    this.sp++;
 	}
     }
+
+    print() {
+	let buf = [];
+	let count = 0;
+	for(var i = this.s0 - 1; i !== this.sp; i--) {
+	    buf.push(this.vm.memory[i]);
+	    count++;
+	}
+	this.vm.systemOut.log('<' + count + '> ' + buf);
+    }
 }
 
 class InputQueue {
@@ -532,7 +545,7 @@ class InputQueue {
     }
 
     clear() {
-	this.vm.debug('clearing inputBuffer');
+	this.vm.debugFinest('clearing inputBuffer');
 	this.tos = this.i0 - 1;
 	this.rp = this.i0 - 1;
 	this.ip = this.i0 - 1;
@@ -661,7 +674,7 @@ class ForthVM {
 	this.addPrimitives();
 	this.state = 0; // interpret mode
 	this.refreshPad();
-	this.debugMode = -1;
+	this.debugMode = 0;
 	this.wordUnderConstruction = null;
 	this.exitXt = Word.findXt(this, 'EXIT');
 	this.cfaXtArray = this.findCfaWords();
@@ -676,14 +689,27 @@ class ForthVM {
     }
 
     debug(...input) {
-	if(this.debugMode === -1) {
+	if(this.debugMode === -1 || this.debugMode === -2) {
 	    this.systemOut.log(input);
 	}
     }
 
+    debugFn(fn, thisArg, ...args) {
+	if(this.debugMode === -1 || this.debugMode === -2) {
+	    fn.call(thisArg, args);
+	}
+    }
+
+    debugFinest(...input) {
+	if(this.debugMode === -2) {
+	    this.systemOut.log(input);
+	}
+
+    }
+
     writeByte(b, offset) {
 	this.byteView[offset] = b;
-	this.debug('writing ' + b + ' @ ' + offset)
+	this.debugFinest('writing ' + b + ' @ ' + offset)
     }
 
     align(offset, write) {
@@ -747,8 +773,8 @@ class ForthVM {
 	}
 	// Make sure we line back up with cell size
 	this.ip = this.writeAlign(tempIp);
-	this.debug('aligned address after write is ' + this.ip)
-	this.debug('it contains ' + this.memory[this.ip]);
+	this.debugFinest('aligned address after write is ' + this.ip)
+	this.debugFinest('it contains ' + this.memory[this.ip]);
     }
 
     readCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack) {
@@ -907,27 +933,26 @@ class ForthVM {
 
     //inline param
     pushFloat32() {
-	this.offsetIp(1);
 	this.push(new Float32Array(this.memory.buffer, this.ip * 4, 1)[0]);
 	this.offsetIp(1)
     }
     
     //inline param
     pushDouble64()  {
-	this.offsetIp(1);
 	this.push(new Float64Array(this.memory.buffer, this.ip * 4, 1)[0]);
 	this.offsetIp(2);
     }
 
     pushInt32()  {
-	this.offsetIp(1);
-	this.push(new Int32Array(this.memory.buffer, this.ip * 4, 1)[0]);
+	let signed = new Int32Array(this.memory.buffer, this.ip * 4, 1)[0];
+	this.debug('Pushing Int32: ' + signed);
+	this.push(signed);
 	this.offsetIp(1);
     }
 
 
     pushUint32() {
-	this.offsetIp(1);
+	this.debugFinest('Pushing Uint32: ' + this.memory[this.ip]);
 	this.push(this.memory[this.ip]);
 	this.offsetIp(1);
     }
@@ -1192,13 +1217,7 @@ class ForthVM {
     }
 
     dotS() {
-	let buf = [];
-	let count = 0;
-	for(var i = this.stack.s0 - 1; i !== this.stack.sp; i--) {
-	    buf.push(this.memory[i]);
-	    count++;
-	}
-	this.systemOut.log('<' + count + '> ' + buf);
+	this.stack.print();
     }
 
     drop() {
@@ -1320,7 +1339,6 @@ class ForthVM {
     }
 
     immediate() {
-	//this.memory[(this.readCountedString(this.latest)[2]) + 1] = 1;
 	this.memory[Word.at(this, this.latest).immediateAddress] = 1;
     }
 
@@ -1370,12 +1388,18 @@ class ForthVM {
 	    this.debug(str);
 	    let word = this.find(str);
 	    if(word !== 0) {
-		this.rPush(this.ip);
+		let top = this.ip;
+		this.rPush(top);
+		this.debug('Rpushed: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
+		
 		this.jmp(word.cfa);
 		this.debug('word.cfa: ' + word.cfa);
-		while(!this.rstack.empty()) {
+		do {
 		    this.docol();
-		}
+		    if(this.ip === top && !this.rstack.empty()) {
+			this.exit();
+		    }
+		} while(!this.rstack.empty() && this.ip !== top)
 	    } else if (this.number(str)) {
 		this.doNumber(str)
 	    } else {
@@ -1398,8 +1422,8 @@ class ForthVM {
 
     isCFA(addr) {
 	for(const i of this.cfaXtArray) {
-	    this.debug('cfa: ' + i);
-	    this.debug('addr: ' + this.memory[addr]);
+	    this.debugFinest('cfa: ' + i);
+	    this.debugFinest('addr: ' + this.memory[addr]);
 	    if(this.memory[addr] === i) {
 		return true;
 	    }
@@ -1425,7 +1449,6 @@ class ForthVM {
 	    this.call();
 	} else {
 	    //noop or empty codeword2:
-	    
 	    this.ip++;
 	    return;
 	}
@@ -1439,6 +1462,7 @@ class ForthVM {
     exit() {
 	this.ip = this.rPop();
 	this.debug('Exiting to: ' + this.ip);
+	this.debug('Return Stack: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
 	return;
     }
 
