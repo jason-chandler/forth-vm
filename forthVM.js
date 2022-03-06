@@ -30,10 +30,10 @@ class OpCode {
     static {}
     static OP_NOOP = 0;
     static OP_JMP = 1;
-    static OP_DO_NLIT = 2;
-    static OP_DO_ULIT = 3;
-    static OP_DO_FLIT = 4;
-    static OP_DO_DLIT = 5;
+    static OP_LIT = 2;
+    static OP_ULIT = 3;
+    static OP_FLIT = 4;
+    static OP_DLIT = 5;
     static OP_RPUSH = 6;
     static OP_RPOP = 7;
     static OP_PUSH = 8;
@@ -74,6 +74,161 @@ class OpCode {
     static OP_DOCON = 43;
     static OP_BRANCH = 44;
     static OP_BRANCH_QUESTION = 45;
+    static OP_WORDS = 46;
+    static OP_COLON = 47;
+    static OP_SEMICOLON = 48;
+    static OP_PARSE = 49;
+    static OP_DROP = 50;
+    static OP_TO_R = 51;
+    static OP_R_TO = 52;
+    static OP_BL = 53;
+
+    static reverseLookup(val) {
+	switch(val) {
+	case OpCode.OP_NOOP:
+	    return 'OP_NOOP';
+	    break;
+	case OpCode.OP_DOCOL:
+	    return 'OP_DOCOL';
+	    break;
+	case OpCode.OP_DOCON:
+	    return 'OP_DOCON';
+	    break;
+	case OpCode.OP_DOVAR:
+	    return 'OP_DOVAR';
+	    break;
+	case OpCode.OP_ULIT:
+	    return 'OP_ULIT';
+	    break;
+	case OpCode.OP_LIT:
+	    return 'OP_LIT';
+	    break;
+	case OpCode.OP_FLIT:
+	    return 'OP_FLIT';
+	    break;
+	case OpCode.OP_DLIT:
+	    return 'OP_DLIT';
+	    break;
+	case OpCode.OP_TO_R:
+	    return 'OP_TO_R';
+	    break;
+	case OpCode.OP_R_TO:
+	    return 'OP_R_TO';
+	    break;
+	case OpCode.OP_PUSH:
+	    return 'OP_PUSH';
+	    break;
+	case OpCode.OP_POP:
+	    return 'OP_POP';
+	    break;
+	case OpCode.OP_SWAP:
+	    return 'OP_SWAP';
+	    break;
+	case OpCode.OP_DUP:
+	    return 'OP_DUP';
+	    break;
+	case OpCode.OP_DROP:
+	    return 'OP_DROP';
+	    break;
+	case OpCode.OP_OVER:
+	    return 'OP_OVER';
+	    break;
+	case OpCode.OP_PICK:
+	    return 'OP_PICK';
+	    break;
+	case OpCode.OP_ROT:
+	    return 'OP_ROT';
+	    break;
+	case OpCode.OP_MINUS_ROT:
+	    return 'OP_MINUS_ROT';
+	    break;
+	case OpCode.OP_NIP:
+	    return 'OP_NIP';
+	    break;
+	case OpCode.OP_TUCK:
+	    return 'OP_TUCK';
+	    break;
+	case OpCode.OP_PLUS:
+	    return 'OP_PLUS';
+	    break;
+	case OpCode.OP_MINUS:
+	    return 'OP_MINUS';
+	    break;
+	case OpCode.OP_SLASH:
+	    return 'OP_SLASH';
+	    break;
+	case OpCode.OP_STAR:
+	    return 'OP_STAR';
+	    break;
+	case OpCode.OP_MOD:
+	    return 'OP_MOD';
+	    break;
+	case OpCode.OP_GREATER:
+	    return 'OP_GREATER';
+	    break;
+	case OpCode.OP_GREATER_EQ:
+	    return 'OP_GREATER_EQ';
+	    break;
+	case OpCode.OP_EQ:
+	    return 'OP_EQ';
+	    break;
+	case OpCode.OP_LESS:
+	    return 'OP_LESS';
+	    break;
+	case OpCode.OP_LESS_EQ:
+	    return 'OP_LESS_EQ';
+	    break;
+	case OpCode.OP_ZERO_EQ:
+	    return 'OP_ZERO_EQ';
+	    break;
+	case OpCode.OP_ZERO_LESS:
+	    return 'OP_ZERO_LESS';
+	    break;
+	case OpCode.OP_BRANCH:
+	    return 'OP_BRANCH';
+	    break;
+	case OpCode.OP_BRANCH_QUESTION:
+	    return 'OP_BRANCH_QUESTION';
+	    break;
+	case OpCode.OP_DOT_S:
+	    return 'OP_DOT_S';
+	    break;
+	case OpCode.OP_DOT:
+	    return 'OP_DOT';
+	    break;
+	case OpCode.OP_FETCH:
+	    return 'OP_FETCH';
+	    break;
+	case OpCode.OP_SP_FETCH:
+	    return 'OP_SP_FETCH';
+	    break;
+	case OpCode.OP_STORE:
+	    return 'OP_STORE';
+	    break;
+	case OpCode.OP_WORDS:
+	    return 'OP_WORDS';
+	    break;
+	case OpCode.OP_COLON:
+	    return 'OP_COLON';
+	    break;
+	case OpCode.OP_SEMICOLON:
+	    return 'OP_SEMICOLON';
+	    break;
+	case OpCode.OP_PARSE:
+	    return 'OP_PARSE';
+	    break;
+	case OpCode.OP_DUMP:
+	    return 'OP_DUMP';
+	    break;
+	case OpCode.OP_DUMPC:
+	    return 'OP_DUMPC';
+	    break;
+	case OpCode.OP_BL:
+	    return 'OP_BL';
+	    break;
+	}
+
+    }
 }
 
 class Debug {
@@ -140,6 +295,7 @@ class Word {
     pfa;
     parameterField;
 
+
     // HEAD
     // name - regular string in constructors, counted string in memory
     // link - address of previous word
@@ -175,12 +331,16 @@ class Word {
 	word.head.name = countString[1];
 	let linkLoc = countString[2];
 	word.head.link = word.vm.memory[linkLoc];
+	word.vm.debug('name: ' + word.head.name);
+	word.vm.debug('address: ' + word.headAddress);
 	word.immediateAddress = linkLoc + 1;
 	word.vm.debug('immediate Addr ' + word.immediateAddress);
 	word.immediate = word.vm.memory[word.immediateAddress];
 	word.vm.debug('immediate ' + word.immediate);
 	word.cfa = word.immediateAddress + 1;
 	word.cfa2 = word.cfa + 1;
+	word.vm.debug('cfa: ' + word.cfa);
+	word.vm.debug('cfa2: ' + word.cfa2);
 	word.codeWord = word.vm.memory[word.cfa];
 	word.codeWord2 = word.vm.memory[word.cfa2];
 	word.vm.debug('word.codeWord = ' + word.codeWord);
@@ -191,7 +351,7 @@ class Word {
 	if(word.codeWord === OpCode.OP_JMP) {
 	    word.parameterField.push(word.vm.memory[pp]);
 	} else {
-	    while((word.vm.memory[pp] !== Word.findXt(word.vm, 'EXIT')) && word.vm.memory[pp] !== undefined) {
+	    while((word.vm.memory[pp] !== word.vm.exitXt) && word.vm.memory[pp] !== undefined) {
 		word.parameterField.push(word.vm.memory[pp]);
 		pp++;
 	    }
@@ -208,12 +368,25 @@ class Word {
 	    this.vm.writeUint32(OpCode.OP_JMP);
 	    this.vm.writeUint32(this.codeWord2);
 	    this.vm.writeUint32(this.parameterField);
+	    // keep hidden until word is defined
+	    this.vm.latest = this.headAddress;
 	} else {
-	    this.vm.writeUint32(Word.findXt('EXIT')); // end with exit
+	    this.vm.writeUint32(this.codeWord);
+	    this.vm.writeUint32(this.codeWord2);
+	    // leave body open for create/colon to compile to
+	    if(this.parameterField !== null && this.parameterField !== undefined) {
+		this.vm.writeUint32(this.parameterField);
+	    }
+	    this.vm.wordUnderConstruction = this.headAddress;
 	}
-	// keep it hidden until word is defined
-	this.vm.latest = this.headAddress;
-	this.vm.here = this.vm.ip;
+	this.vm.dp = this.vm.ip;
+    }
+
+    static endBody(vm) {
+	vm.writeUint32(vm.exitXt);
+	vm.dp = vm.ip;
+	// keep hidden until word is defined
+	vm.latest = vm.wordUnderConstruction;
     }
 
     static getNameAndLinkFromAddr(vm, addr) {
@@ -233,7 +406,7 @@ class Word {
 	    let check = this.getNameAndLinkFromAddr(vm, tempAddr);
 	    let tempName = check[0];
 	    let tempLink = check[1];
-	    if(tempName.toLocaleUpperCase() === name.toLocaleUpperCase()) {
+	    if(String(tempName).toLocaleUpperCase() === String(name).toLocaleUpperCase()) {
 		return tempAddr;
 	    } else {
 		tempAddr = tempLink;
@@ -243,23 +416,46 @@ class Word {
     }
 
     static findWord(vm, name) {
-	let addr = Word.find(vm, name.toLocaleUpperCase());
+	let addr = Word.find(vm, String(name).toLocaleUpperCase());
 	if (addr === 0) {
 	    return 0;
 	} else {
-	    return Word.fromDict(vm, name.toLocaleUpperCase(), addr);
+	    return Word.fromDict(vm, String(name).toLocaleUpperCase(), addr);
 	}
     }
 
+    static at(vm, addr) {
+	return Word.fromDict(vm, vm.readCountedString(addr)[1].toLocaleUpperCase(), addr);
+    }
+
+    // Probably slow, just use this for debug
+    static fromCfa(vm, cfa) {
+	if(vm.latest === 0) {
+	    throw("Forth VM has no definitions!");
+	}
+	let tempAddr = vm.latest;
+	while(tempAddr !== 0) {
+	    let check = this.getNameAndLinkFromAddr(vm, tempAddr);
+	    let tempName = check[0];
+	    let tempLink = check[1];
+	    let word = Word.fromDict(vm, String(tempName).toLocaleUpperCase(), tempAddr);
+	    if(cfa === word.cfa) {
+		return word;
+	    } else {
+		tempAddr = tempLink;
+	    }
+	}
+	return tempAddr;
+    }
+    
     static findXt(vm, name) {
-	let wordOrZero = Word.findWord(vm, name.toLocaleUpperCase());
+	let wordOrZero = Word.findWord(vm, String(name).toLocaleUpperCase());
 	if(wordOrZero !== 0) {
 	    return wordOrZero.cfa;;
 	} else {
-	    vm.abort(name.toLocaleUpperCase() + " ?");
+	    vm.abort(String(name).toLocaleUpperCase() + " ?");
 	}
     }
-
 }
 
 
@@ -318,6 +514,7 @@ class InputQueue {
     ip;
     to_in;
     rp;
+    rotation;
 
     constructor(vm, address) {
 	this.vm = vm;
@@ -327,20 +524,26 @@ class InputQueue {
 	this.tos = this.ip;
 	this.rp = this.ip;
 	this.to_in = 0;
+	this.rotation = 0;
     }
 
     empty() {
-	return this.ip === this.i0 - 1 && this.tos === this.ip;
+	return this.rp === this.ip;
     }
 
     clear() {
+	this.vm.debug('clearing inputBuffer');
 	this.tos = this.i0 - 1;
 	this.rp = this.i0 - 1;
+	this.ip = this.i0 - 1;
 	this.to_in = 0;
+	this.rotation = 0;
+	/*
 	while(this.ip !== this.i0 - 1) {
 	    this.vm.writeByte(0, this.ip);
 	    this.ip++;
 	}
+	*/
     }
 
     push(name) {
@@ -364,16 +567,44 @@ class InputQueue {
 	    let str = '';
 	    for(var i = 0; i < len; i++) {
 		str += String.fromCharCode(this.vm.byteView[this.rp]);
-		this.rp--
+		this.rp--;
 		this.to_in++;
 	    }
 	    if(this.rp === this.ip) {
-		this.clear();
+		this.rotation++;
+		if(this.rotation === 16) {
+		    this.clear();
+		}
 	    }
 	    return str;
 	} else {
-	    this.vm.systemOut.log('INPUT BUFFER UNDERFLOW');
+	    this.vm.abort('INPUT BUFFER UNDERFLOW');
 	}
+    }
+
+    rewind(len) {
+	if(this.rp + len >= this.i0) {
+	    this.vm.abort("INPUT BUFFER UNDERFLOW");
+	}
+	this.rp += len;
+	this.to_in -= len;
+    }
+
+    skip(len) {
+	if(this.rp - len < this.ip) {
+	    this.vm.abort("INPUT BUFFER OVERFLOW");
+	}
+	this.rp -= len;
+	this.to_in += len;
+    }
+
+    rewriteAtRp(name) {
+	let saveIp = this.ip;
+	let saveTos = this.tos;
+	this.ip = this.rp;
+	this.push(name);
+	this.ip = saveIp;
+	this.tos = saveTos;
     }
 
     print() {
@@ -398,14 +629,18 @@ class ForthVM {
     memory;
     cell_size;
     ip;
-    here;
+    dp;
     latest;
     source_id;
     systemOut;
     state;
     pad;
     debugMode;
-    
+    userMark;
+    sysMark;
+    wordUnderConstruction;
+    exitXt;
+    cfaXtArray;
 
     constructor() {
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
@@ -418,7 +653,7 @@ class ForthVM {
 	this.jstack = [];
 	this.inputBuffer = new InputQueue(this, this.memory_size - 804);
 	this.ip = 2; // program counter, current interp address
-	this.here = 2;
+	this.dp = 2;
 	this.eax; // register for current value
 	this.latest = 0;
 	this.source_id = -1; // -1 for string eval, 0 for file
@@ -426,7 +661,18 @@ class ForthVM {
 	this.addPrimitives();
 	this.state = 0; // interpret mode
 	this.refreshPad();
-	this.debugMode = 0;
+	this.debugMode = -1;
+	this.wordUnderConstruction = null;
+	this.exitXt = Word.findXt(this, 'EXIT');
+	this.cfaXtArray = this.findCfaWords();
+    }
+
+    findCfaWords() {
+	let arr = [];
+	for(const i of ['DOCOL','DOCON','DOVAR','CREATE']) {
+	    arr.push(Word.findXt(this, i));
+	}
+	return arr;
     }
 
     debug(...input) {
@@ -483,6 +729,10 @@ class ForthVM {
 	this.push(Word.findXt(this, name));
     }
 
+    here() {
+	this.stack.push(this.ip);
+    }
+
     // Write a counted string and then align to cell size
     writeCountedString(name, addr) {
 	if (addr === undefined) { addr = this.ip };
@@ -501,12 +751,27 @@ class ForthVM {
 	this.debug('it contains ' + this.memory[this.ip]);
     }
 
-    readCountedString(addr) {
+    readCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack) {
 	if ( addr === undefined) { addr = this.ip };
-	let byteAddress = this.getByteAddress(addr);
+	let byteAddress;
+	let len;
+	if(isLengthOnStack) {
+	    len = this.stack.pop();
+	}
+	if(isAddrOnStack) {
+	    addr = this.stack.pop();
+	}
+	
+	if(!isByteAddress) {
+	    byteAddress = this.getByteAddress(addr);
+	} else {
+	    byteAddress = addr;
+	}
 	// Max length is 255
-	let len = this.byteView[byteAddress];
-	byteAddress++;
+	if(!isLengthOnStack) {
+	    len = this.byteView[byteAddress];
+	    byteAddress++;
+	} 
 	let str = '';
 	for(var i = 0; i < len; i++) {
 	    str += String.fromCharCode(this.byteView[byteAddress]);
@@ -515,8 +780,42 @@ class ForthVM {
 	return [len, str, this.readAlign(byteAddress)]; // 
     }
 
+    readReversedCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack) {
+	if ( addr === undefined) { addr = this.ip };
+	let byteAddress;
+	let len;
+	if(isLengthOnStack) {
+	    len = this.stack.pop();
+	}
+	if(isAddrOnStack) {
+	    addr = this.stack.pop();
+	}
+	
+	if(!isByteAddress) {
+	    byteAddress = this.getByteAddress(addr);
+	} else {
+	    byteAddress = addr;
+	}
+	// Max length is 255
+	if(!isLengthOnStack) {
+	    len = this.byteView[byteAddress];
+	    byteAddress--;
+	}
+	let str = '';
+	for(var i = 0; i < len; i++) {
+	    str += String.fromCharCode(this.byteView[byteAddress]);
+	    byteAddress--;
+	}
+	return [len, str]; // 
+    }
+
     writeUint32(u) {
 	this.memory[this.ip] = u;
+	this.ip++;
+    }
+
+    writeInt32(i) {
+	new Int32Array(this.memory.buffer, this.ip * 4, 1)[0] = i;
 	this.ip++;
     }
 
@@ -530,6 +829,9 @@ class ForthVM {
     
 
     defcode(name, immediate, opcode) {
+	if(opcode === undefined) {
+	    this.abort('Undefined opcode: ' + name);
+	}
 	// a codeword of 1 will run the next address as a JS primitive lookup
 	Word.newWord(this, name, immediate, OpCode.OP_JMP, opcode);
     }
@@ -548,8 +850,8 @@ class ForthVM {
 	this.defcode('DOCOL', 0, OpCode.OP_DOCOL);
 	this.defcode(':', 0, OpCode.OP_COLON);
 	this.defcode(';', 1, OpCode.OP_SEMICOLON);
-	this.defcode('DOLIT', 0, OpCode.OP_DOLIT);
-	this.defcode('DOFLIT', 0, OpCode.OP_DOFLIT);
+	this.defcode('LIT', 0, OpCode.OP_LIT);
+	this.defcode('FLIT', 0, OpCode.OP_FLIT);
 	this.defcode('DUP', 0, OpCode.OP_DUP);
 	this.defcode('DROP', 0, OpCode.OP_DROP);
 	this.defcode('OVER', 0, OpCode.OP_OVER);
@@ -579,6 +881,9 @@ class ForthVM {
 	this.defcode('SP@', 0, OpCode.OP_SP_FETCH);
 	this.defcode('BRANCH', 0, OpCode.OP_BRANCH);
 	this.defcode('BRANCH?', 0, OpCode.OP_BRANCH_QUESTION);
+	this.defcode('WORDS', 0, OpCode.OP_WORDS);
+	this.defcode('PARSE', 0, OpCode.OP_PARSE);
+	this.defcode('BL', 0, OpCode.OP_BL);
     }
 
     offsetIp(numCells) {
@@ -650,7 +955,7 @@ class ForthVM {
 	let startingAddr = this.stack.pop();
 	let tempBuff = [];
 	for(var i = 0; i < numBytes; i++) {
-	    tempBuff.push(this.byteView[startingAddr + i]);
+	    tempBuff.push(String.fromCharCode(this.byteView[startingAddr + i]));
 	}
 	this.systemOut.log(tempBuff);
     }
@@ -703,7 +1008,7 @@ class ForthVM {
 	this.ip = dest;
     }
 
-    doPrimitive(prim) {
+    engine(prim) {
 	switch(prim) {
 	case OpCode.OP_NOOP:
 	    this.noOp();
@@ -717,18 +1022,17 @@ class ForthVM {
 	case OpCode.OP_DOVAR:
 	    this.dovar();
 	    break;
-
-	case OpCode.OP_DO_ULIT:
-	    this.doULit();
+	case OpCode.OP_ULIT:
+	    this.uLit();
 	    break;
-	case OpCode.OP_DO_LIT:
-	    this.doLit();
+	case OpCode.OP_LIT:
+	    this.lit();
 	    break;
-	case OpCode.OP_DO_FLIT:
-	    this.doFLit()
+	case OpCode.OP_FLIT:
+	    this.fLit()
 	    break;
-	case OpCode.OP_DO_DLIT:
-	    this.doDLit();
+	case OpCode.OP_DLIT:
+	    this.dLit();
 	    break;
 	case OpCode.OP_TO_R:
 	    this.rPush();
@@ -823,9 +1127,29 @@ class ForthVM {
 	case OpCode.OP_SP_FETCH:
 	    this.sp_fetch();
 	    break;
-
 	case OpCode.OP_STORE:
 	    this.store();
+	    break;
+	case OpCode.OP_WORDS:
+	    this.words();
+	    break;
+	case OpCode.OP_COLON:
+	    this.colon();
+	    break;
+	case OpCode.OP_SEMICOLON:
+	    this.semicolon();
+	    break;
+	case OpCode.OP_PARSE:
+	    this.parse();
+	    break;
+	case OpCode.OP_DUMP:
+	    this.dump();
+	    break;
+	case OpCode.OP_DUMPC:
+	    this.dumpc();
+	    break;
+	case OpCode.OP_BL:
+	    this.bl();
 	    break;
 	}
     }
@@ -834,27 +1158,27 @@ class ForthVM {
 	this.ip += 2;
 	let prim = this.memory[this.ip];
 	this.exit();
-	this.debug('Calling primitive: ' + prim);
-	this.doPrimitive(prim);
+	this.debug('Calling primitive: ' + OpCode.reverseLookup(prim));
+	this.engine(prim);
     }
 
     checkForCode() {
 	return this.memory[this.ip] === OpCode.OP_JMP;
     }
 
-    doULit() {
+    uLit() {
 	this.pushUint32();
     }
 
-    doLit() {
+    lit() {
 	this.pushInt32();
     }
 
-    doFLit() {
+    fLit() {
 	this.pushFloat32();
     }
 
-    doDLit() {
+    dLit() {
 	this.pushDouble64();
     }
 
@@ -878,6 +1202,7 @@ class ForthVM {
     }
 
     drop() {
+	this.debug('dropping');
 	this.stack.pop();
     }
 
@@ -938,8 +1263,69 @@ class ForthVM {
 	this.memory[addr] = val;
     }
 
+    bl() {
+	this.stack.push(32);
+    }
+
+    parse() {
+	let parseChar = String.fromCharCode(this.stack.pop());
+	let str = '';
+	// skip leading space after PARSE
+	if(!this.inputBuffer.empty()) {
+	    this.inputBuffer.pop();
+	}
+	let nextWord = '';
+	while(!nextWord.includes(parseChar) && !this.inputBuffer.empty()) {
+	    nextWord = this.inputBuffer.pop();
+	    str += nextWord;
+	}
+	let split = str.split(parseChar);
+	this.inputBuffer.rewind(split[0].length + 1);
+	if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
+	    this.inputBuffer.rewind(split[1].length + 1);
+	}
+	this.inputBuffer.rewriteAtRp(split[0]);
+	let strAddress = this.inputBuffer.rp - 1;
+	this.inputBuffer.skip(split[0].length + 1)
+	if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
+	    this.inputBuffer.rewriteAtRp(split[1]);
+	}
+	this.stack.push(strAddress);
+	this.stack.push(split[0].length);
+    }
+
+    colon() {
+	if(this.state === -1) {
+	    this.abort('Cannot nest colon definitions');
+	}
+	this.sysMark = this.dp;
+	this.bl();
+	this.parse();
+	this.state = -1;
+	let name = this.readReversedCountedString(null, true, true, true)[1];
+	if(name === undefined || name === null || name.trim() === '') {
+	    this.abort('Word name cannot be blank for colon definition');
+	}
+	this.ip = this.dp;
+	Word.newWord(this, name, 0, this.cfaXtArray[0]);
+    }
+
+    semicolon() {
+	if(this.state === -1) {
+	    Word.endBody(this);
+	    this.state = 0;
+	} else {
+	    this.abort('Semicolon not allowed outside colon definition');
+	}
+    }
+
+    immediate() {
+	//this.memory[(this.readCountedString(this.latest)[2]) + 1] = 1;
+	this.memory[Word.at(this, this.latest).immediateAddress] = 1;
+    }
+
     number(str) {
-	return str.trim() !== '' && Number(str).toString() !== 'NaN';
+	return String(str).trim() !== '' && Number(str).toString() !== 'NaN';
     }
 
     doNumber(str) {
@@ -955,28 +1341,33 @@ class ForthVM {
 	    }
 	} else {
 	    if(str.startsWith('0x') || str.startsWith('-0x')) {
-		this.writeUint32(Word.findXt(this, "DOLIT"));
+		this.writeUint32(Word.findXt(this, "LIT"));
 		this.writeInt32(Number(str));
 	    } else if(str.includes('e')) {
-		this.writeUint32(Word.findXt(this, "DOFLIT"));
+		this.writeUint32(Word.findXt(this, "FLIT"));
 		this.writeFloat32(Number(str));
 	    } else if(str.includes('.')) {
 		this.systemOut.log('Not implemented yet')
 	    } else {
-		this.writeUint32(Word.findXt(this, "DOLIT"));
+		this.writeUint32(Word.findXt(this, "LIT"));
 		this.writeInt32(Number(str));
 	    }
 	}
     }
 
     splitAndFilter(str) {
-	let blankFn = function(word) { return word !== '' && word !== '\n'; };
-	return str.trim().split(' ').filter(blankFn);
+	let blankFn = function(word) { return word !== '' && word !== '\n' && word !== undefined && word !== null; };
+	return String(str).trim().split(' ').filter(blankFn);
     }
 
     processInputBuffer() {
 	while(!this.inputBuffer.empty()) {
 	    let str = this.inputBuffer.pop();
+	    while(str === ' ') {
+		str = this.inputBuffer.pop();
+	    }
+	    this.debug('input is: ' + str);
+	    this.debug(str);
 	    let word = this.find(str);
 	    if(word !== 0) {
 		this.rPush(this.ip);
@@ -998,22 +1389,43 @@ class ForthVM {
 	this.debug('this is the split:' + split);
 	for(var i = 0; i < split.length; i++) {
 	    this.inputBuffer.push(split[i]);
+	    if(i+1 !== split.length) {
+		this.inputBuffer.push(' ');
+	    }
 	}
-	this.engine();
+	this.process();
+    }
+
+    isCFA(addr) {
+	for(const i of this.cfaXtArray) {
+	    this.debug('cfa: ' + i);
+	    this.debug('addr: ' + this.memory[addr]);
+	    if(this.memory[addr] === i) {
+		return true;
+	    }
+	}
+	return false;
     }
 
     docol() {
 	let dest = this.memory[this.ip];
+	this.debug('Jump destination: ' + dest);
 	// When we jump back, we want the next space
 	let isCode = this.checkForCode();
 	if(!isCode && dest !== 0) {
-	    this.ip++;
+	    if(this.isCFA(this.ip)) {
+		this.debug('skipping cfa2: ' + (this.ip + 1))
+		this.ip += 2;
+	    } else {
+		this.ip++;
+	    }
 	    this.rPush(this.ip);
 	    this.jmp(dest);
 	} else if(isCode) {
 	    this.call();
 	} else {
 	    //noop or empty codeword2:
+	    
 	    this.ip++;
 	    return;
 	}
@@ -1026,6 +1438,7 @@ class ForthVM {
 	
     exit() {
 	this.ip = this.rPop();
+	this.debug('Exiting to: ' + this.ip);
 	return;
     }
 
@@ -1068,7 +1481,7 @@ class ForthVM {
     }	
 
 
-    engine() {
+    process() {
 	    try {
 		if(!this.rstack.empty()) {
 		    this.docol();
@@ -1078,6 +1491,7 @@ class ForthVM {
 		this.systemOut.log('ok');
 	    } catch (e) {
 		this.systemOut.log('Error: ' + e);
+		this.systemOut.log(e.stack);
 	    }
 	    
     }
