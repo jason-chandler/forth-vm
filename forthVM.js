@@ -373,6 +373,7 @@ class Word {
 	    this.vm.writeUint32(this.parameterField);
 	    // keep hidden until word is defined
 	    this.vm.latest = this.headAddress;
+	    this.vm.dp = this.vm.ip;
 	} else {
 	    this.vm.writeUint32(this.codeWord);
 	    this.vm.writeUint32(this.codeWord2);
@@ -382,7 +383,7 @@ class Word {
 	    }
 	    this.vm.wordUnderConstruction = this.headAddress;
 	}
-	this.vm.dp = this.vm.ip;
+
     }
 
     static endBody(vm) {
@@ -1449,16 +1450,16 @@ class ForthVM {
 			let afterStack = this.stack.toJSArray();
 			let afterRstack = this.rstack.toJSArray();
 			if(tmpStack.length !== afterStack.length || tmpRstack.length !== afterRstack.length) {
-			    this.abort('Error: stack modified during definition');
+			    this.abort('Stack modified during definition');
 			}
 			for(const i in tmpStack) {
 			    if(tmpStack[i] !== afterStack[i]) {
-				this.abort('Error: stack modified during definition');
+				this.abort('Stack modified during definition');
 			    }
 			}
 			for(const i in tmpRstack) {
 			    if(tmpRstack[i] !== afterRstack[i]) {
-				this.abort('Error: Return stack modified during definition');
+				this.abort('Return stack modified during definition');
 			    }
 			}
 		    } else {
