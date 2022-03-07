@@ -518,6 +518,17 @@ class Stack {
 	}
 	this.vm.systemOut.log('<' + count + '> ' + buf);
     }
+
+    toJSArray() {
+	let buf = [];
+	let count = 0;
+	for(var i = this.s0 - 1; i !== this.sp; i--) {
+	    buf.push(this.vm.memory[i]);
+	    count++;
+	}
+	return buf;
+    }
+
 }
 
 class InputQueue {
@@ -682,7 +693,7 @@ class ForthVM {
 
     findCfaWords() {
 	let arr = [];
-	for(const i of ['DOCOL','DOCON','DOVAR','CREATE']) {
+	for(const i of ['DOCOL','DOCON','DOVAR']) {
 	    arr.push(Word.findXt(this, i));
 	}
 	return arr;
@@ -757,6 +768,14 @@ class ForthVM {
 
     here() {
 	this.stack.push(this.ip);
+    }
+
+    create() {
+	
+    }
+
+    does() {
+
     }
 
     // Write a counted string and then align to cell size
@@ -899,8 +918,8 @@ class ForthVM {
 	this.defcode('DOES>', 0, OpCode.OP_DOES);
 	this.defcode('ALIGN', 0, OpCode.OP_ALIGN);
 	this.defcode('ALIGNED', 0, OpCode.OP_ALIGNED);
-	this.defcode('IMMEDIATE', 1, OpCode.OP_IMMEDIATE);
-	this.defcode('[', 0, OpCode.OP_LBRAC);
+	this.defcode('IMMEDIATE', 0, OpCode.OP_IMMEDIATE);
+	this.defcode('[', 1, OpCode.OP_LBRAC);
 	this.defcode(']', 1, OpCode.OP_RBRAC);
 	this.defcode('!', 0, OpCode.OP_STORE);
 	this.defcode('@', 0, OpCode.OP_FETCH);
@@ -995,9 +1014,24 @@ class ForthVM {
 	this.clearStacks();
     }
 
+    forgetDefinitionInProgress() {
+	if(!this.rstack.empty()) {
+	    this.ip = (this.rstack.s0 - 1)
+	}
+	while(this.ip > this.sysMark) {
+	    this.memory[this.ip] = 0;
+	    this.ip--;
+	}
+	this.memory[this.ip] = 0;
+	this.state = 0;
+    }
+
     abort(msg) {
 	if(msg === undefined || msg === null) {
 	    msg = 'Abort called at ' + this.ip;
+	}
+	if(this.state === -1) {
+	    this.forgetDefinitionInProgress();
 	}
 	this.quit();
 	throw(msg);
@@ -1179,6 +1213,15 @@ class ForthVM {
 	case OpCode.OP_EXIT:
 	    this.exit();
 	    break;
+	case OpCode.OP_CREATE:
+	    this.create();
+	    break;
+	case OpCode.OP_DOES:
+	    this.does();
+	    break;
+	case OpCode.OP_IMMEDIATE:
+	    this.immediate();
+	    break;
 	}
     }
 
@@ -1224,7 +1267,6 @@ class ForthVM {
     }
 
     drop() {
-	this.debug('dropping');
 	this.stack.pop();
     }
 
@@ -1391,18 +1433,48 @@ class ForthVM {
 	    this.debug(str);
 	    let word = this.find(str);
 	    if(word !== 0) {
-		let top = this.ip;
-		this.rPush(top);
-		this.debug('Rpushed: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
-		
-		this.jmp(word.cfa);
-		this.debug('word.cfa: ' + word.cfa);
-		do {
-		    this.docol();
+		if (this.state === 0 || word.immediate === 1) {
+		    let top = this.ip;
+		    this.rPush(top);
+		    this.debug('Rpushed: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
+		    
+		    this.jmp(word.cfa);
+		    this.debug('word.cfa: ' + word.cfa);
+
+		    if(this.state === -1 && word.immediate === 1) {
+			let tmpStack = this.stack.toJSArray();
+			let tmpRstack = this.rstack.toJSArray();
+			tmpRstack.pop();
+			this.docol();
+			let afterStack = this.stack.toJSArray();
+			let afterRstack = this.rstack.toJSArray();
+			if(tmpStack.length !== afterStack.length || tmpRstack.length !== afterRstack.length) {
+			    this.abort('Error: stack modified during definition');
+			}
+			for(const i in tmpStack) {
+			    if(tmpStack[i] !== afterStack[i]) {
+				this.abort('Error: stack modified during definition');
+			    }
+			}
+			for(const i in tmpRstack) {
+			    if(tmpRstack[i] !== afterRstack[i]) {
+				this.abort('Error: Return stack modified during definition');
+			    }
+			}
+		    } else {
+			this.docol();
+		    }
 		    if(this.ip === top && !this.rstack.empty()) {
 			this.exit();
 		    }
-		} while(!this.rstack.empty() && this.ip !== top)
+
+		} else {
+		    if(word.name !== ':') {
+			this.writeUint32(word.cfa);
+		    } else {
+			this.abort('Cannot compile ' + word.name + ' to a definition');
+		    }
+		}
 	    } else if (this.number(str)) {
 		this.doNumber(str)
 	    } else {
@@ -1435,6 +1507,7 @@ class ForthVM {
     }
 
     docol() {
+	do {
 	let dest = this.memory[this.ip];
 	this.debug('Jump destination: ' + dest);
 	// When we jump back, we want the next space
@@ -1455,6 +1528,7 @@ class ForthVM {
 	    this.ip++;
 	    return;
 	}
+	} while(!this.rstack.empty());
     }
 
     docon() {
