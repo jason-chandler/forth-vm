@@ -82,6 +82,9 @@ class OpCode {
     static OP_TO_R = 51;
     static OP_R_TO = 52;
     static OP_BL = 53;
+    static OP_DODOES = 54;
+    static OP_CONSTANT = 55;
+    static OP_VARIABLE = 56;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -229,6 +232,21 @@ class OpCode {
 	case OpCode.OP_BL:
 	    return 'OP_BL';
 	    break;
+	case OpCode.OP_DODOES:
+	    return 'OP_DODOES';
+	    break;
+	case OpCode.OP_VARIABLE:
+	    return 'OP_VARIABLE';
+	    break;
+	case OpCode.OP_CONSTANT:
+	    return 'OP_CONSTANT';
+	    break;
+	case OpCode.OP_CREATE:
+	    return 'OP_CREATE';
+	    break;
+	case OpCode.OP_DOES:
+	    return 'OP_DOES';
+	    break;
 	}
 
     }
@@ -273,12 +291,12 @@ class Head {
     }
 
     writeName() {
-	this.vm.writeCountedString(this.name);
+	this.vm.dp = this.vm.writeCountedString(this.name, this.vm.dp);
     }
 
     makeLink() {
 	this.link = this.vm.latest
-	this.vm.writeUint32(this.link);
+	this.vm.dp = this.vm.writeUint32(this.link, this.vm.dp);
     }
 
     write() {
@@ -313,7 +331,7 @@ class Word {
     static newWord(vm, name, immediate, codeWord, parameterField, codeWord2) {
 	let word = new Word();
 	word.vm = vm;
-	word.headAddress = word.vm.ip;
+	word.headAddress = word.vm.dp;
 	word.head = new Head(word.vm, name, word.headAddress);
 	word.head.write();
 	word.immediate = immediate; // is this an immediate word
@@ -364,22 +382,22 @@ class Word {
     }
 
     writeBody() {
-	this.immediateAddr = this.vm.ip;
-	this.vm.writeUint32(this.immediate);
-	this.cfa = this.vm.ip;
+	this.immediateAddr = this.vm.dp;
+	this.vm.dp = this.vm.writeUint32(this.immediate, this.vm.dp);
+	this.cfa = this.vm.dp;
 	if(this.codeWord === OpCode.OP_JMP) { // code, not high level Forth
-	    this.vm.writeUint32(OpCode.OP_JMP);
-	    this.vm.writeUint32(this.codeWord2);
-	    this.vm.writeUint32(this.parameterField);
+	    this.vm.dp = this.vm.writeUint32(OpCode.OP_JMP, this.vm.dp);
+	    this.vm.dp = this.vm.writeUint32(this.codeWord2, this.vm.dp);
+	    this.vm.dp = this.vm.writeUint32(this.parameterField, this.vm.dp);
 	    // keep hidden until word is defined
 	    this.vm.latest = this.headAddress;
-	    this.vm.dp = this.vm.ip;
+
 	} else {
-	    this.vm.writeUint32(this.codeWord);
-	    this.vm.writeUint32(this.codeWord2);
+	    this.vm.dp = this.vm.writeUint32(this.codeWord, this.vm.dp);
+	    this.vm.dp = this.vm.writeUint32(this.codeWord2, this.vm.dp);
 	    // leave body open for create/colon to compile to
 	    if(this.parameterField !== null && this.parameterField !== undefined) {
-		this.vm.writeUint32(this.parameterField);
+		this.vm.dp = this.vm.writeUint32(this.parameterField, this.vm.dp);
 	    }
 	    this.vm.wordUnderConstruction = this.headAddress;
 	}
@@ -387,10 +405,17 @@ class Word {
     }
 
     static endBody(vm) {
-	vm.writeUint32(vm.exitXt);
-	vm.dp = vm.ip;
+	vm.dp = vm.writeUint32(vm.exitXt, vm.dp);
 	// keep hidden until word is defined
+	Word.unhideLatest(vm);
+    }
+
+    static unhideLatest(vm) {
 	vm.latest = vm.wordUnderConstruction;
+    }
+
+    static lastDefinitionUsedCreate(vm) {
+	return Word.at(vm, vm.latest).codeWord2 === 1;
     }
 
     static getNameAndLinkFromAddr(vm, addr) {
@@ -686,7 +711,7 @@ class ForthVM {
 	this.addPrimitives();
 	this.state = 0; // interpret mode
 	this.refreshPad();
-	this.debugMode = 0;
+	this.debugMode = -1;
 	this.wordUnderConstruction = null;
 	this.exitXt = Word.findXt(this, 'EXIT');
 	this.cfaXtArray = this.findCfaWords();
@@ -694,7 +719,7 @@ class ForthVM {
 
     findCfaWords() {
 	let arr = [];
-	for(const i of ['DOCOL','DOCON','DOVAR']) {
+	for(const i of ['DOCOL','DOCON','DOVAR', 'DODOES']) {
 	    arr.push(Word.findXt(this, i));
 	}
 	return arr;
@@ -702,7 +727,7 @@ class ForthVM {
 
     debug(...input) {
 	if(this.debugMode === -1 || this.debugMode === -2) {
-	    this.systemOut.log(input);
+	    this.systemOut.log.apply(this.systemOut, input);
 	}
     }
 
@@ -714,7 +739,7 @@ class ForthVM {
 
     debugFinest(...input) {
 	if(this.debugMode === -2) {
-	    this.systemOut.log(input);
+	    this.systemOut.log.apply(this.systemOut, input);
 	}
 
     }
@@ -763,7 +788,9 @@ class ForthVM {
     }
 
     tick() {
-	let name = this.parse();
+	this.bl();
+	this.parse();
+	let name = this.readReversedCountedString(null, true, true, true)[1];
 	this.push(Word.findXt(this, name));
     }
 
@@ -772,16 +799,91 @@ class ForthVM {
     }
 
     create() {
-	
+	this.bl();
+	this.parse();
+	let name = this.readReversedCountedString(null, true, true, true)[1];
+	if(name === undefined || name === null || name.trim() === '') {
+	    this.abort('Word name cannot be blank for create definition');
+	}
+	Word.newWord(this, name, 0, this.cfaXtArray[2], null, 1);
+	Word.unhideLatest(this);
     }
 
     does() {
+	if(Word.lastDefinitionUsedCreate(this)) {
+	    let instanceWord = Word.at(this, this.latest);
+	    this.memory[instanceWord.cfa] = this.cfaXtArray[3];
+	    this.memory[instanceWord.cfa2] = this.ip + 1;
+	    this.debug('does: ');
+	    this.debug(instanceWord);
+	    this.exit();
+	} else {
+	    this.abort('DOES> used without create');
+	}
+    }
+
+    variable() {
+	this.bl();
+	this.parse();
+	let name = this.readReversedCountedString(null, true, true, true)[1];
+	if(name === undefined || name === null || name.trim() === '') {
+	    this.abort('Word name cannot be blank for variable definition');
+	}
+	Word.newWord(this, name, 0, this.cfaXtArray[2], 0);
+	Word.unhideLatest(this);
 
     }
 
+    constant() {
+	this.bl();
+	this.parse();
+	let name = this.readReversedCountedString(null, true, true, true)[1];
+	if(name === undefined || name === null || name.trim() === '') {
+	    this.abort('Word name cannot be blank for constant definition');
+	}
+	const constant = this.stack.pop();
+	Word.newWord(this, name, 0, this.cfaXtArray[1], constant);
+	this.debug('New constant ' + name + ' with value: ' + constant);
+	Word.unhideLatest(this);
+    }
+
+
+    dodoesLoop(addr) {
+	do {
+	    let dest = this.memory[this.ip];
+	    this.debug('dodoes Jump destination: ' + dest);
+	    // When we jump back, we want the next space
+	    let isCode = this.checkForCode();
+	    if(!isCode && dest !== 0) {
+		if(this.isCFA(this.ip)) {
+		    this.debug('skipping cfa2: ' + (this.ip + 1))
+		    this.ip += 2;
+		} else {
+		    this.ip++;
+		}
+		this.rPush(this.ip);
+		this.jmp(dest);
+	    } else if(isCode) {
+		this.call();
+	    } else {
+		//noop or empty codeword2:
+		this.ip++;
+		return;
+	    }
+	} while(this.ip !== addr);
+    }
+    
+    dodoes() {
+	this.stack.push(this.ip);
+	this.ip--;
+	this.dodoesLoop(this.ip);
+	this.exit();
+    }
+    
     // Write a counted string and then align to cell size
     writeCountedString(name, addr) {
-	if (addr === undefined) { addr = this.ip };
+	let isIp;
+	if (addr === undefined) { addr = this.ip; isIp = true; };
 	let tempIp = this.getByteAddress(addr);
 	let truncLength = Math.min(name.length, 255);
 	this.writeByte(truncLength, tempIp);
@@ -792,7 +894,11 @@ class ForthVM {
 	    this.debug(name.charCodeAt(i));
 	}
 	// Make sure we line back up with cell size
-	this.ip = this.writeAlign(tempIp);
+	if(isIp) {
+	    this.ip = this.writeAlign(tempIp);
+	} else {
+	    return this.writeAlign(tempIp);
+	}
 	this.debugFinest('aligned address after write is ' + this.ip)
 	this.debugFinest('it contains ' + this.memory[this.ip]);
     }
@@ -855,14 +961,24 @@ class ForthVM {
 	return [len, str]; // 
     }
 
-    writeUint32(u) {
-	this.memory[this.ip] = u;
-	this.ip++;
+    writeUint32(u, addr) {
+	if(addr === undefined || addr === null) {
+	    this.memory[this.ip] = u;
+	    this.ip++;
+	} else {
+	    this.memory[addr] = u;
+	    return addr + 1;
+	}
     }
 
-    writeInt32(i) {
-	new Int32Array(this.memory.buffer, this.ip * 4, 1)[0] = i;
-	this.ip++;
+    writeInt32(i, addr) {
+	if(addr === undefined || addr === null) {
+	    new Int32Array(this.memory.buffer, this.ip * 4, 1)[0] = i;
+	    this.ip++;
+	} else {
+	    new Int32Array(this.memory.buffer, addr * 4, 1)[0] = i;
+	    return addr + 1;
+	}
     }
 
     clearStacks() {
@@ -930,6 +1046,9 @@ class ForthVM {
 	this.defcode('WORDS', 0, OpCode.OP_WORDS);
 	this.defcode('PARSE', 0, OpCode.OP_PARSE);
 	this.defcode('BL', 0, OpCode.OP_BL);
+	this.defcode('DODOES', 0, OpCode.OP_DODOES);
+	this.defcode('VARIABLE', 0, OpCode.OP_VARIABLE);
+	this.defcode('CONSTANT', 0, OpCode.OP_CONSTANT);
     }
 
     offsetIp(numCells) {
@@ -1223,6 +1342,17 @@ class ForthVM {
 	case OpCode.OP_IMMEDIATE:
 	    this.immediate();
 	    break;
+	case OpCode.OP_DODOES:
+	    this.dodoes();
+	    break;
+	case OpCode.OP_VARIABLE:
+	    this.variable();
+	    break;
+	case OpCode.OP_CONSTANT:
+	    this.constant();
+	    break;
+	default:
+	    this.abort('Missing CODE: ' + prim);
 	}
     }
 
@@ -1254,8 +1384,8 @@ class ForthVM {
 	this.pushDouble64();
     }
 
-    doVar() {
-	this.stack.push(this.ip + 1);
+    dovar() {
+	this.stack.push(this.ip);
 	this.exit();
     }
 
@@ -1323,8 +1453,8 @@ class ForthVM {
     }
 
     store() {
-	let val = this.stack.pop();
 	let addr = this.stack.pop();
+	let val = this.stack.pop();
 	this.memory[addr] = val;
     }
 
@@ -1405,16 +1535,16 @@ class ForthVM {
 	    }
 	} else {
 	    if(str.startsWith('0x') || str.startsWith('-0x')) {
-		this.writeUint32(Word.findXt(this, "LIT"));
-		this.writeInt32(Number(str));
+		this.dp = this.writeUint32(Word.findXt(this, "LIT"), this.dp);
+		this.dp = this.writeInt32(Number(str), this.dp);
 	    } else if(str.includes('e')) {
-		this.writeUint32(Word.findXt(this, "FLIT"));
-		this.writeFloat32(Number(str));
+		this.dp = this.writeUint32(Word.findXt(this, "FLIT"), this.dp);
+		this.dp = this.writeFloat32(Number(str), this.dp);
 	    } else if(str.includes('.')) {
 		this.systemOut.log('Not implemented yet')
 	    } else {
-		this.writeUint32(Word.findXt(this, "LIT"));
-		this.writeInt32(Number(str));
+		this.dp = this.writeUint32(Word.findXt(this, "LIT"), this.dp);
+		this.dp = this.writeInt32(Number(str), this.dp);
 	    }
 	}
     }
@@ -1471,7 +1601,7 @@ class ForthVM {
 
 		} else {
 		    if(word.name !== ':') {
-			this.writeUint32(word.cfa);
+			this.dp = this.writeUint32(word.cfa, this.dp);
 		    } else {
 			this.abort('Cannot compile ' + word.name + ' to a definition');
 		    }
@@ -1509,32 +1639,32 @@ class ForthVM {
 
     docol() {
 	do {
-	let dest = this.memory[this.ip];
-	this.debug('Jump destination: ' + dest);
-	// When we jump back, we want the next space
-	let isCode = this.checkForCode();
-	if(!isCode && dest !== 0) {
-	    if(this.isCFA(this.ip)) {
-		this.debug('skipping cfa2: ' + (this.ip + 1))
-		this.ip += 2;
+	    let dest = this.memory[this.ip];
+	    this.debug('Jump destination: ' + dest);
+	    // When we jump back, we want the next space
+	    let isCode = this.checkForCode();
+	    if(!isCode && dest !== 0) {
+		if(this.isCFA(this.ip)) {
+		    this.debug('skipping cfa2: ' + (this.ip + 1))
+		    this.ip += 2;
+		} else {
+		    this.ip++;
+		}
+		this.rPush(this.ip);
+		this.jmp(dest);
+	    } else if(isCode) {
+		this.call();
 	    } else {
+		//noop or empty codeword2:
 		this.ip++;
+		return;
 	    }
-	    this.rPush(this.ip);
-	    this.jmp(dest);
-	} else if(isCode) {
-	    this.call();
-	} else {
-	    //noop or empty codeword2:
-	    this.ip++;
-	    return;
-	}
 	} while(!this.rstack.empty());
     }
 
     docon() {
-	// should be pointing to cfa2
-	this.stack.push(this.memory[this.ip + 1]);
+	this.stack.push(this.memory[this.ip]);
+	this.exit();
     }
 	
     exit() {
@@ -1580,8 +1710,7 @@ class ForthVM {
 	let b = this.pop();
 	let a = this.pop();
 	this.push(a%b);
-    }	
-
+    }
 
     process() {
 	    try {
