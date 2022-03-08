@@ -711,7 +711,7 @@ class ForthVM {
 	this.addPrimitives();
 	this.state = 0; // interpret mode
 	this.refreshPad();
-	this.debugMode = -1;
+	this.debugMode = 0;
 	this.wordUnderConstruction = null;
 	this.exitXt = Word.findXt(this, 'EXIT');
 	this.cfaXtArray = this.findCfaWords();
@@ -813,7 +813,7 @@ class ForthVM {
 	if(Word.lastDefinitionUsedCreate(this)) {
 	    let instanceWord = Word.at(this, this.latest);
 	    this.memory[instanceWord.cfa] = this.cfaXtArray[3];
-	    this.memory[instanceWord.cfa2] = this.ip + 1;
+	    this.memory[instanceWord.cfa2] = this.ip;
 	    this.debug('does: ');
 	    this.debug(instanceWord);
 	    this.exit();
@@ -848,7 +848,7 @@ class ForthVM {
     }
 
 
-    dodoesLoop(addr) {
+    dodoesLoop(topIp) {
 	do {
 	    let dest = this.memory[this.ip];
 	    this.debug('dodoes Jump destination: ' + dest);
@@ -870,7 +870,7 @@ class ForthVM {
 		this.ip++;
 		return;
 	    }
-	} while(this.ip !== addr);
+	} while(this.ip !== topIp);
     }
     
     dodoes() {
