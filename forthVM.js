@@ -85,6 +85,9 @@ class OpCode {
     static OP_DODOES = 54;
     static OP_CONSTANT = 55;
     static OP_VARIABLE = 56;
+    static OP_ALLOCATE = 57;
+    static OP_COMMA = 58;
+    static OP_C_COMMA = 59;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -247,6 +250,15 @@ class OpCode {
 	case OpCode.OP_DOES:
 	    return 'OP_DOES';
 	    break;
+	case OpCode.OP_ALLOCATE:
+	    return 'OP_ALLOCATE';
+	    break;
+	case OpCode.OP_COMMA:
+	    return 'OP_COMMA';
+	    break;
+	case OpCode.OP_C_COMMA:
+	    return 'OP_C_COMMA';
+	    break;
 	}
 
     }
@@ -279,7 +291,7 @@ class Debug {
 }
 
 class Head {
-    vm;
+    Vm;
     name;
     address;
     link;
@@ -291,12 +303,12 @@ class Head {
     }
 
     writeName() {
-	this.vm.dp = this.vm.writeCountedString(this.name, this.vm.dp);
+	this.vm.offsetDp(-this.vm.dp + this.vm.writeCountedString(this.name, this.vm.dp));
     }
 
     makeLink() {
 	this.link = this.vm.latest
-	this.vm.dp = this.vm.writeUint32(this.link, this.vm.dp);
+	this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.link, this.vm.dp));
     }
 
     write() {
@@ -383,21 +395,21 @@ class Word {
 
     writeBody() {
 	this.immediateAddr = this.vm.dp;
-	this.vm.dp = this.vm.writeUint32(this.immediate, this.vm.dp);
+	this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.immediate, this.vm.dp));
 	this.cfa = this.vm.dp;
 	if(this.codeWord === OpCode.OP_JMP) { // code, not high level Forth
-	    this.vm.dp = this.vm.writeUint32(OpCode.OP_JMP, this.vm.dp);
-	    this.vm.dp = this.vm.writeUint32(this.codeWord2, this.vm.dp);
-	    this.vm.dp = this.vm.writeUint32(this.parameterField, this.vm.dp);
+	    this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(OpCode.OP_JMP, this.vm.dp));
+	    this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.codeWord2, this.vm.dp));
+	    this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.parameterField, this.vm.dp));
 	    // keep hidden until word is defined
 	    this.vm.latest = this.headAddress;
 
 	} else {
-	    this.vm.dp = this.vm.writeUint32(this.codeWord, this.vm.dp);
-	    this.vm.dp = this.vm.writeUint32(this.codeWord2, this.vm.dp);
+	    this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.codeWord, this.vm.dp));
+	    this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.codeWord2, this.vm.dp));
 	    // leave body open for create/colon to compile to
 	    if(this.parameterField !== null && this.parameterField !== undefined) {
-		this.vm.dp = this.vm.writeUint32(this.parameterField, this.vm.dp);
+		this.vm.offsetDp(-this.vm.dp + this.vm.writeUint32(this.parameterField, this.vm.dp));
 	    }
 	    this.vm.wordUnderConstruction = this.headAddress;
 	}
@@ -405,7 +417,7 @@ class Word {
     }
 
     static endBody(vm) {
-	vm.dp = vm.writeUint32(vm.exitXt, vm.dp);
+	vm.offsetDp(-vm.dp + vm.writeUint32(vm.exitXt, vm.dp));
 	// keep hidden until word is defined
 	Word.unhideLatest(vm);
     }
@@ -704,6 +716,7 @@ class ForthVM {
 	this.inputBuffer = new InputQueue(this, this.memory_size - 804);
 	this.ip = 2; // program counter, current interp address
 	this.dp = 2;
+	this.cdp = this.dp * this.cell_size; // char-aligned dictionary pointer
 	this.eax; // register for current value
 	this.latest = 0;
 	this.source_id = -1; // -1 for string eval, 0 for file
@@ -795,7 +808,7 @@ class ForthVM {
     }
 
     here() {
-	this.stack.push(this.ip);
+	this.stack.push(this.dp);
     }
 
     create() {
@@ -847,6 +860,22 @@ class ForthVM {
 	Word.unhideLatest(this);
     }
 
+    allocate() {
+	let cells = this.stack.pop();
+	this.offsetDp(cells);
+    }
+
+    comma() {
+	const x = this.stack.pop();
+	this.memory[this.dp] = x;
+	this.offsetDp(1);
+    }
+
+    cComma() {
+	const x = this.stack.pop();
+	this.byteView[this.cdp] = x;
+	this.offsetDp(1, true);
+    }
 
     dodoesLoop(topIp) {
 	do {
@@ -870,7 +899,7 @@ class ForthVM {
 		this.ip++;
 		return;
 	    }
-	} while(this.ip !== topIp);
+	} while(this.ip !== topIp || this.rstack.empty());
     }
     
     dodoes() {
@@ -881,7 +910,7 @@ class ForthVM {
     }
     
     // Write a counted string and then align to cell size
-    writeCountedString(name, addr) {
+    writeCountedString(name, addr, charAligned) {
 	let isIp;
 	if (addr === undefined) { addr = this.ip; isIp = true; };
 	let tempIp = this.getByteAddress(addr);
@@ -897,7 +926,11 @@ class ForthVM {
 	if(isIp) {
 	    this.ip = this.writeAlign(tempIp);
 	} else {
-	    return this.writeAlign(tempIp);
+	    if(!charAligned) {
+		return this.writeAlign(tempIp);
+	    } else {
+		return tempIp;
+	    }
 	}
 	this.debugFinest('aligned address after write is ' + this.ip)
 	this.debugFinest('it contains ' + this.memory[this.ip]);
@@ -1049,10 +1082,23 @@ class ForthVM {
 	this.defcode('DODOES', 0, OpCode.OP_DODOES);
 	this.defcode('VARIABLE', 0, OpCode.OP_VARIABLE);
 	this.defcode('CONSTANT', 0, OpCode.OP_CONSTANT);
+	this.defcode('ALLOCATE', 0, OpCode.OP_ALLOCATE);
+	this.defcode(',', 0, OpCode.OP_COMMA);
+	this.defcode('C,', 0, OpCode.OP_C_COMMA);
     }
 
     offsetIp(numCells) {
 	this.ip += numCells;
+    }
+
+    offsetDp(offset, isBytes) {
+	if(isBytes) {
+	    this.cdp += offset;
+	    this.dp = readAlign(this.cdp);
+	} else {
+	    this.dp += offset;
+	    this.cdp = this.dp * this.cell_size;
+	}
     }
 
     noOp() {
@@ -1351,6 +1397,15 @@ class ForthVM {
 	case OpCode.OP_CONSTANT:
 	    this.constant();
 	    break;
+	case OpCode.OP_ALLOCATE:
+	    this.allocate();
+	    break;
+	case OpCode.OP_COMMA:
+	    this.comma();
+	    break;
+	case OpCode.OP_C_COMMA:
+	    this.cComma();
+	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
 	}
@@ -1535,16 +1590,16 @@ class ForthVM {
 	    }
 	} else {
 	    if(str.startsWith('0x') || str.startsWith('-0x')) {
-		this.dp = this.writeUint32(Word.findXt(this, "LIT"), this.dp);
-		this.dp = this.writeInt32(Number(str), this.dp);
+		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "LIT"), this.dp));
+		this.offsetDp(-this.dp + this.writeInt32(Number(str), this.dp));
 	    } else if(str.includes('e')) {
-		this.dp = this.writeUint32(Word.findXt(this, "FLIT"), this.dp);
-		this.dp = this.writeFloat32(Number(str), this.dp);
+		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "FLIT"), this.dp));
+		this.offsetDp(-this.dp + this.writeFloat32(Number(str), this.dp));
 	    } else if(str.includes('.')) {
 		this.systemOut.log('Not implemented yet')
 	    } else {
-		this.dp = this.writeUint32(Word.findXt(this, "LIT"), this.dp);
-		this.dp = this.writeInt32(Number(str), this.dp);
+		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "LIT"), this.dp));
+		this.offsetDp(-this.dp + this.writeInt32(Number(str), this.dp));
 	    }
 	}
     }
@@ -1601,7 +1656,7 @@ class ForthVM {
 
 		} else {
 		    if(word.name !== ':') {
-			this.dp = this.writeUint32(word.cfa, this.dp);
+			this.offsetDp(-this.dp + this.writeUint32(word.cfa, this.dp));
 		    } else {
 			this.abort('Cannot compile ' + word.name + ' to a definition');
 		    }
