@@ -85,7 +85,7 @@ class OpCode {
     static OP_DODOES = 54;
     static OP_CONSTANT = 55;
     static OP_VARIABLE = 56;
-    static OP_ALLOCATE = 57;
+    static OP_ALLOT = 57;
     static OP_COMMA = 58;
     static OP_C_COMMA = 59;
 
@@ -250,14 +250,20 @@ class OpCode {
 	case OpCode.OP_DOES:
 	    return 'OP_DOES';
 	    break;
-	case OpCode.OP_ALLOCATE:
-	    return 'OP_ALLOCATE';
+	case OpCode.OP_ALLOT:
+	    return 'OP_ALLOT';
 	    break;
 	case OpCode.OP_COMMA:
 	    return 'OP_COMMA';
 	    break;
 	case OpCode.OP_C_COMMA:
 	    return 'OP_C_COMMA';
+	    break;
+	case OpCode.OP_LBRAC:
+	    return 'OP_LBRAC';
+	    break;
+	case OpCode.OP_RBRAC:
+	    return 'OP_RBRAC';
 	    break;
 	}
 
@@ -762,7 +768,7 @@ class ForthVM {
 	this.debugFinest('writing ' + b + ' @ ' + offset)
     }
 
-    align(offset, write) {
+    alignHelper(offset, write) {
 	if(offset === 0) {
 	    return 0;
 	}
@@ -785,11 +791,22 @@ class ForthVM {
     }
 
     writeAlign(offset) {
-	return this.align(offset, true);
+	return this.alignHelper(offset, true);
     }
 
     readAlign(offset) {
-	return this.align(offset, false);
+	return this.alignHelper(offset, false);
+    }
+
+    align() {
+	let alignedAddr = readAlign(this.here());
+	this.dp = alignedAddr;
+	this.cdp = alignedAddr * this.cell_size;
+    }
+
+    aligned() {
+	let alignedAddr = readAlign(this.here()) * this.cell_size;
+	this.stack.push(alignedAddr);
     }
 
     getByteAddress(addr) {
@@ -808,7 +825,7 @@ class ForthVM {
     }
 
     here() {
-	this.stack.push(this.dp);
+	this.stack.push(this.cdp);
     }
 
     create() {
@@ -860,9 +877,9 @@ class ForthVM {
 	Word.unhideLatest(this);
     }
 
-    allocate() {
-	let cells = this.stack.pop();
-	this.offsetDp(cells);
+    allot() {
+	let bytes = this.stack.pop();
+	this.offsetDp(bytes, true);
     }
 
     comma() {
@@ -1082,7 +1099,7 @@ class ForthVM {
 	this.defcode('DODOES', 0, OpCode.OP_DODOES);
 	this.defcode('VARIABLE', 0, OpCode.OP_VARIABLE);
 	this.defcode('CONSTANT', 0, OpCode.OP_CONSTANT);
-	this.defcode('ALLOCATE', 0, OpCode.OP_ALLOCATE);
+	this.defcode('ALLOT', 0, OpCode.OP_ALLOT);
 	this.defcode(',', 0, OpCode.OP_COMMA);
 	this.defcode('C,', 0, OpCode.OP_C_COMMA);
     }
@@ -1094,7 +1111,7 @@ class ForthVM {
     offsetDp(offset, isBytes) {
 	if(isBytes) {
 	    this.cdp += offset;
-	    this.dp = readAlign(this.cdp);
+	    this.dp = this.readAlign(this.cdp);
 	} else {
 	    this.dp += offset;
 	    this.cdp = this.dp * this.cell_size;
@@ -1397,14 +1414,20 @@ class ForthVM {
 	case OpCode.OP_CONSTANT:
 	    this.constant();
 	    break;
-	case OpCode.OP_ALLOCATE:
-	    this.allocate();
+	case OpCode.OP_ALLOT:
+	    this.allot();
 	    break;
 	case OpCode.OP_COMMA:
 	    this.comma();
 	    break;
 	case OpCode.OP_C_COMMA:
 	    this.cComma();
+	    break;
+	case OpCode.OP_LBRAC:
+	    this.lbrac();
+	    break;
+	case OpCode.OP_RBRAC:
+	    this.rbrac();
 	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
@@ -1515,6 +1538,28 @@ class ForthVM {
 
     bl() {
 	this.stack.push(32);
+    }
+
+    lbrac() {
+	if(this.specialInterpret) {
+	    this.abort('Cannot nest left brackets');
+	}
+	if(state !== -1) {
+	    this.abort('Left bracket cannot be used in execute mode');
+	}
+	this.state = 0;
+	this.specialInterpret = true;
+    }
+
+    rbrac() {
+	if(state !== 0) {
+	    this.abort('Right bracket cannot be used in compile mode');
+	}
+	if(!this.specialInterpret) {
+	    this.abort('Cannot use right bracket without left bracket');
+	}
+	this.state = -1;
+	this.specialInterpret = false;
     }
 
     parse() {
