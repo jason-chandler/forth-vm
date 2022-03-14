@@ -73,7 +73,7 @@ class OpCode {
     static OP_DOVAR = 42;
     static OP_DOCON = 43;
     static OP_BRANCH = 44;
-    static OP_BRANCH_QUESTION = 45;
+    static OP_0BRANCH = 45;
     static OP_WORDS = 46;
     static OP_COLON = 47;
     static OP_SEMICOLON = 48;
@@ -88,6 +88,12 @@ class OpCode {
     static OP_ALLOT = 57;
     static OP_COMMA = 58;
     static OP_C_COMMA = 59;
+    static OP_HERE = 60;
+    static OP_IF = 61;
+    static OP_ELSE = 62;
+    static OP_THEN = 63;
+    static OP_TRUE = 64;
+    static OP_FALSE = 65;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -196,8 +202,8 @@ class OpCode {
 	case OpCode.OP_BRANCH:
 	    return 'OP_BRANCH';
 	    break;
-	case OpCode.OP_BRANCH_QUESTION:
-	    return 'OP_BRANCH_QUESTION';
+	case OpCode.OP_0BRANCH:
+	    return 'OP_0BRANCH';
 	    break;
 	case OpCode.OP_DOT_S:
 	    return 'OP_DOT_S';
@@ -265,6 +271,24 @@ class OpCode {
 	case OpCode.OP_RBRAC:
 	    return 'OP_RBRAC';
 	    break;
+	case OpCode.OP_HERE:
+	    return 'OP_HERE';
+	    break;
+	case OpCode.OP_IF:
+	    return 'OP_IF';
+	    break;
+	case OpCode.OP_ELSE:
+	    return 'OP_ELSE';
+	    break;
+	case OpCode.OP_THEN:
+	    return 'OP_THEN';
+	    break;
+	case OpCode.OP_TRUE:
+	    return 'OP_TRUE';
+	    break;
+	case OpCode.OP_FALSE:
+	    return 'OP_FALSE';
+	    break;	    
 	}
 
     }
@@ -691,6 +715,7 @@ class ForthVM {
     rstack;
     fstack;
     jstack;
+    cfstack;
     inputBuffer;
     eax;
     memory_size;
@@ -709,6 +734,7 @@ class ForthVM {
     wordUnderConstruction;
     exitXt;
     cfaXtArray;
+    controlFlowUnresolved;
 
     constructor() {
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
@@ -718,8 +744,9 @@ class ForthVM {
 	this.stack = new Stack(this, this.memory_size - 603, this.cell_size);
 	this.rstack = new Stack(this, this.memory_size - 402, this.cell_size);
 	this.fstack = new Stack(this, this.memory_size - 201, this.cell_size);
+	this.cfstack = new Stack(this, this.memory_size - 804, this.cell_size);
 	this.jstack = [];
-	this.inputBuffer = new InputQueue(this, this.memory_size - 804);
+	this.inputBuffer = new InputQueue(this, this.memory_size - 1005);
 	this.ip = 2; // program counter, current interp address
 	this.dp = 2;
 	this.cdp = this.dp * this.cell_size; // char-aligned dictionary pointer
@@ -734,6 +761,7 @@ class ForthVM {
 	this.wordUnderConstruction = null;
 	this.exitXt = Word.findXt(this, 'EXIT');
 	this.cfaXtArray = this.findCfaWords();
+	this.controlFlowUnresolved = 0;
     }
 
     findCfaWords() {
@@ -821,7 +849,7 @@ class ForthVM {
 	this.bl();
 	this.parse();
 	let name = this.readReversedCountedString(null, true, true, true)[1];
-	this.push(Word.findXt(this, name));
+	this.stack.push(Word.findXt(this, name));
     }
 
     here() {
@@ -861,7 +889,6 @@ class ForthVM {
 	}
 	Word.newWord(this, name, 0, this.cfaXtArray[2], 0);
 	Word.unhideLatest(this);
-
     }
 
     constant() {
@@ -1035,8 +1062,10 @@ class ForthVM {
 	this.rstack.clear();
 	this.stack.clear();
 	this.fstack.clear();
+	this.cfstack.clear();
 	this.inputBuffer.clear();
 	this.jstack = [];
+	this.controlFlowUnresolved = 0;
     }
     
 
@@ -1092,7 +1121,7 @@ class ForthVM {
 	this.defcode('@', 0, OpCode.OP_FETCH);
 	this.defcode('SP@', 0, OpCode.OP_SP_FETCH);
 	this.defcode('BRANCH', 0, OpCode.OP_BRANCH);
-	this.defcode('BRANCH?', 0, OpCode.OP_BRANCH_QUESTION);
+	this.defcode('0BRANCH', 0, OpCode.OP_0BRANCH);
 	this.defcode('WORDS', 0, OpCode.OP_WORDS);
 	this.defcode('PARSE', 0, OpCode.OP_PARSE);
 	this.defcode('BL', 0, OpCode.OP_BL);
@@ -1102,6 +1131,12 @@ class ForthVM {
 	this.defcode('ALLOT', 0, OpCode.OP_ALLOT);
 	this.defcode(',', 0, OpCode.OP_COMMA);
 	this.defcode('C,', 0, OpCode.OP_C_COMMA);
+	this.defcode('HERE', 0, OpCode.OP_HERE);
+	this.defcode('IF', 1, OpCode.OP_IF);
+	this.defcode('ELSE', 1, OpCode.OP_ELSE);
+	this.defcode('THEN', 1, OpCode.OP_THEN);
+	this.defcode('TRUE', 0, OpCode.OP_TRUE);
+	this.defcode('FALSE', 0, OpCode.OP_FALSE);
     }
 
     offsetIp(numCells) {
@@ -1130,41 +1165,41 @@ class ForthVM {
     }
 
     refreshPad() {
-	this.pad = this.ip + 200;
+	this.pad = this.dp + 200;
     }
 
     //inline param
     pushFloat32() {
-	this.push(new Float32Array(this.memory.buffer, this.ip * 4, 1)[0]);
+	this.stack.push(new Float32Array(this.memory.buffer, this.ip * 4, 1)[0]);
 	this.offsetIp(1)
     }
     
     //inline param
     pushDouble64()  {
-	this.push(new Float64Array(this.memory.buffer, this.ip * 4, 1)[0]);
+	this.stack.push(new Float64Array(this.memory.buffer, this.ip * 4, 1)[0]);
 	this.offsetIp(2);
     }
 
     pushInt32()  {
 	let signed = new Int32Array(this.memory.buffer, this.ip * 4, 1)[0];
 	this.debug('Pushing Int32: ' + signed);
-	this.push(signed);
+	this.stack.push(signed);
 	this.offsetIp(1);
     }
 
 
     pushUint32() {
 	this.debugFinest('Pushing Uint32: ' + this.memory[this.ip]);
-	this.push(this.memory[this.ip]);
+	this.stack.push(this.memory[this.ip]);
 	this.offsetIp(1);
     }
 
     pushFalse() {
-	this.push(0);
+	this.stack.push(0);
     }
 
     pushTrue() {
-	this.push(-1);
+	this.stack.push(-1);
     }
 
     dump() {
@@ -1224,28 +1259,6 @@ class ForthVM {
 	this.rstack.push(reg);
     }
 
-    rPop() {
-	if(this.rstack.length !== 0) {
-	    return this.rstack.pop();
-	} else {
-	    this.systemOut.log("RSTACK UNDERFLOW");
-	    this.abort();
-	}
-    }
-
-    push(reg) {
-	this.stack.push(reg);
-    }
-
-    pop() {
-	if(this.stack.length !== 0) {
-	    return this.stack.pop();
-	} else {
-	    this.systemOut.log("STACK UNDERFLOW");
-	    this.abort();
-	}
-    }
-
     jmp(dest) {
 	this.ip = dest;
     }
@@ -1277,16 +1290,10 @@ class ForthVM {
 	    this.dLit();
 	    break;
 	case OpCode.OP_TO_R:
-	    this.rPush();
+	    this.toR();
 	    break;
 	case OpCode.OP_R_TO:
-	    this.rPop();
-	    break;
-	case OpCode.OP_PUSH:
-	    this.push();
-	    break;
-	case OpCode.OP_POP:
-	    this.pop();
+	    this.rTo();
 	    break;
 	case OpCode.OP_SWAP:
 	    this.swap();
@@ -1354,8 +1361,8 @@ class ForthVM {
 	case OpCode.OP_BRANCH:
 	    this.branch();
 	    break;
-	case OpCode.OP_BRANCH_QUESTION:
-	    this.branchQuestion();
+	case OpCode.OP_0BRANCH:
+	    this.zeroBranch();
 	    break;
 	case OpCode.OP_DOT_S:
 	    this.dotS();
@@ -1428,6 +1435,24 @@ class ForthVM {
 	    break;
 	case OpCode.OP_RBRAC:
 	    this.rbrac();
+	    break;
+	case OpCode.OP_HERE:
+	    this.here();
+	    break;
+	case OpCode.OP_IF:
+	    this.opIf();
+	    break;
+	case OpCode.OP_ELSE:
+	    this.opElse();
+	    break;
+	case OpCode.OP_THEN:
+	    this.opThen();
+	    break;
+	case OpCode.OP_TRUE:
+	    this.pushTrue();
+	    break;
+	case OpCode.OP_FALSE:
+	    this.pushFalse();
 	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
@@ -1544,7 +1569,7 @@ class ForthVM {
 	if(this.specialInterpret) {
 	    this.abort('Cannot nest left brackets');
 	}
-	if(state !== -1) {
+	if(this.state !== -1) {
 	    this.abort('Left bracket cannot be used in execute mode');
 	}
 	this.state = 0;
@@ -1552,7 +1577,7 @@ class ForthVM {
     }
 
     rbrac() {
-	if(state !== 0) {
+	if(this.state !== 0) {
 	    this.abort('Right bracket cannot be used in compile mode');
 	}
 	if(!this.specialInterpret) {
@@ -1607,6 +1632,9 @@ class ForthVM {
 
     semicolon() {
 	if(this.state === -1) {
+	    if(this.unresolvedControlFlow()) {
+		this.abort('Control flow word is unresolved');
+	    }
 	    Word.endBody(this);
 	    this.state = 0;
 	} else {
@@ -1671,7 +1699,8 @@ class ForthVM {
 		    
 		    this.jmp(word.cfa);
 		    this.debug('word.cfa: ' + word.cfa);
-
+		    this.docol();
+		    /*
 		    if(this.state === -1 && word.immediate === 1) {
 			let tmpStack = this.stack.toJSArray();
 			let tmpRstack = this.rstack.toJSArray();
@@ -1694,7 +1723,7 @@ class ForthVM {
 			}
 		    } else {
 			this.docol();
-		    }
+		    } */
 		    if(this.ip === top && !this.rstack.empty()) {
 			this.exit();
 		    }
@@ -1768,48 +1797,127 @@ class ForthVM {
     }
 	
     exit() {
-	this.ip = this.rPop();
+	this.ip = this.rstack.pop();
 	this.debug('Exiting to: ' + this.ip);
 	this.debug('Return Stack: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
 	return;
     }
 
     toR() {
-	this.rPush(this.pop());
+	this.rstack.push(this.stack.pop());
     }
 
     Rto() {
-	this.push(this.rPop());
+	this.stack.push(this.rstack.pop());
     }
 
     plus() {
-	let b = this.pop();
-	let a = this.pop();
-	this.push(a+b);
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	this.stack.push(a+b);
     }
 
     minus() {
-	let b = this.pop();
-	let a = this.pop();
-	this.push(a-b);
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	this.stack.push(a-b);
     }
 
     star() {
-	let b = this.pop();
-	let a = this.pop();
-	this.push(a*b);
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	this.stack.push(a*b);
     }
 
     slash() {
-	let b = this.pop();
-	let a = this.pop();
-	this.push(Math.floor(a/b));
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	this.stack.push(Math.floor(a/b));
     }
 
     mod() {
-	let b = this.pop();
-	let a = this.pop();
-	this.push(a%b);
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	this.stack.push(a%b);
+    }
+
+    zeroEq() {
+	if(this.stack.pop() === 0) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
+    zeroBranch() {
+	this.debugFinest('executing 0branch');
+	let brVal = this.stack.pop();
+	this.pushUint32();
+	if(brVal === 0) {
+	    this.ip = this.stack.pop();
+	} else {
+	    this.drop();
+	}
+    }
+
+    branch() {
+	this.pushUint32();
+	this.ip = this.stack.pop();
+    }
+
+    postpone() {
+	this.bl();
+	this.parse();
+	let name = this.readReversedCountedString(null, true, true, true)[1];
+	this.writeUint32(Word.findXt(this, name), this.dp);
+    }
+
+    unresolvedControlFlow() {
+	return this.controlFlowUnresolved <= -1;
+    }
+
+    opIf() {
+	if(this.state === -1) {
+	    this.debugFinest('Entering IF')
+	    this.debugFinest('Writing 0Branch at ' + this.dp);
+	    this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "0BRANCH"), this.dp));
+	    this.debugFinest('Writing addr at ' + this.dp);
+	    let orig = this.dp;
+	    this.offsetDp(-this.dp + this.writeUint32(0, this.dp));
+	    this.cfstack.push(orig);
+	    this.controlFlowUnresolved -= 1;
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+    }
+
+    opElse() {
+	if(this.state === -1) {
+	    if(this.unresolvedControlFlow()) {
+		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "BRANCH"), this.dp));
+		let orig2 = this.dp;
+		this.offsetDp(-this.dp + this.writeUint32(0, this.dp));
+		this.memory[this.cfstack.pop()] = this.dp;
+		this.cfstack.push(orig2);
+	    } else {
+		this.abort('Cannot use else without matching if');
+	    }
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+    }
+
+    opThen() {
+	if(this.state === -1) {
+	    if(this.unresolvedControlFlow()) {
+		this.memory[this.cfstack.pop()] = this.dp;
+		this.controlFlowUnresolved++;
+	    } else {
+		this.abort('Cannot use then without matching if');
+	    }
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
     }
 
     process() {
