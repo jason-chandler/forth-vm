@@ -536,6 +536,7 @@ class Stack {
     s0; // below bottom of stack
     sp; // stack pointer
     cell_size;
+    control_indices;
 
     constructor(vm, s0, cell_size) {
 	this.vm = vm;
@@ -544,10 +545,15 @@ class Stack {
 	this.sp = this.s0 - 1; 
 	this.cell_size = cell_size;
 	this.stack_limit = 200;
+	this.control_indices = [];
     }
 
     empty() {
 	return this.sp === this.s0 - 1;
+    }
+
+    depth() {
+	return this.s0 - 1 - this.sp;
     }
 
     push(val) {
@@ -559,14 +565,33 @@ class Stack {
 	}
     }
 
+    pushControl(val, label) {
+	this.push(val);
+	this.control_indices.push({ index: (this.sp + 1), label: label });
+    }
+
     pop() {
 	if(this.empty()) {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
-	    this.sp++;
-	    let val = this.memory[this.sp];
-	    return val;
+	    if(this.control_indices.length === 0 || this.control_indices[this.control_indices.length - 1].index !== (this.sp + 1)) { 
+		this.sp++;
+		let val = this.memory[this.sp];
+		return val;
+	    } else {
+		throw('Control instruction ' + this.control_indices[this.control_indices.length - 1].label + ' cannot be used as a value');
+	    }
+	}
+    }
+
+    popControl() {
+	let ctrl = this.control_indices.pop();
+	if(ctrl.index === (this.sp + 1))
+	{
+	    return this.pop();
+	} else {
+	    this.vm.abort('Control flow mismatch: ' + ctrl.label);
 	}
     }
 
@@ -575,6 +600,7 @@ class Stack {
 	    this.vm.memory[this.sp] = 0;
 	    this.sp++;
 	}
+	this.control_indices = [];
     }
 
     print() {
@@ -1062,7 +1088,6 @@ class ForthVM {
 	this.rstack.clear();
 	this.stack.clear();
 	this.fstack.clear();
-	this.cfstack.clear();
 	this.inputBuffer.clear();
 	this.jstack = [];
 	this.controlFlowUnresolved = 0;
@@ -1884,7 +1909,7 @@ class ForthVM {
 	    this.debugFinest('Writing addr at ' + this.dp);
 	    let orig = this.dp;
 	    this.offsetDp(-this.dp + this.writeUint32(0, this.dp));
-	    this.cfstack.push(orig);
+	    this.stack.pushControl(orig, 'orig');
 	    this.controlFlowUnresolved -= 1;
 	} else {
 	    this.abort('Cannot use control flow construct in interpret mode');
@@ -1897,8 +1922,8 @@ class ForthVM {
 		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "BRANCH"), this.dp));
 		let orig2 = this.dp;
 		this.offsetDp(-this.dp + this.writeUint32(0, this.dp));
-		this.memory[this.cfstack.pop()] = this.dp;
-		this.cfstack.push(orig2);
+		this.memory[this.stack.popControl()] = this.dp;
+		this.stack.pushControl(orig2, 'orig2');
 	    } else {
 		this.abort('Cannot use else without matching if');
 	    }
@@ -1910,7 +1935,7 @@ class ForthVM {
     opThen() {
 	if(this.state === -1) {
 	    if(this.unresolvedControlFlow()) {
-		this.memory[this.cfstack.pop()] = this.dp;
+		this.memory[this.stack.popControl()] = this.dp;
 		this.controlFlowUnresolved++;
 	    } else {
 		this.abort('Cannot use then without matching if');
@@ -1918,6 +1943,10 @@ class ForthVM {
 	} else {
 	    this.abort('Cannot use control flow construct in interpret mode');
 	}
+    }
+
+    opDo() {
+	
     }
 
     process() {
