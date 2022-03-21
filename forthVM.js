@@ -105,6 +105,14 @@ class OpCode {
     static OP_I = 74;
     static OP_J = 75;
     static OP_RUN_LEAVE = 76;
+    static OP_BEGIN = 77;
+    static OP_UNTIL = 78;
+    static OP_WHILE = 79;
+    static OP_REPEAT = 80;
+    static OP_GREATER = 81;
+    static OP_LESS = 82;
+    static OP_GREATER_EQ = 83;
+    static OP_LESS_EQ = 84;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -333,8 +341,19 @@ class OpCode {
 	case OpCode.OP_RUN_LEAVE:
 	    return 'OP_RUN_LEAVE';
 	    break;
+	case OpCode.OP_BEGIN:
+	    return 'OP_BEGIN';
+	    break;
+	case OpCode.OP_UNTIL:
+	    return 'OP_UNTIL';
+	    break;
+	case OpCode.OP_WHILE:
+	    return 'OP_WHILE';
+	    break;
+	case OpCode.OP_REPEAT:
+	    return 'OP_REPEAT';
+	    break;
 	}
-
     }
 }
 
@@ -1264,6 +1283,14 @@ class ForthVM {
 	this.defcode('I', 0, OpCode.OP_I);
 	this.defcode('J', 0, OpCode.OP_J);
 	this.defcode('(LEAVE)', 0, OpCode.OP_RUN_LEAVE);
+	this.defcode('BEGIN', 1, OpCode.OP_BEGIN);
+	this.defcode('UNTIL', 1, OpCode.OP_UNTIL);
+	this.defcode('WHILE', 1, OpCode.OP_WHILE);
+	this.defcode('REPEAT', 1, OpCode.OP_REPEAT);
+	this.defcode('>', 0, OpCode.OP_GREATER);
+	this.defcode('>=', 0, OpCode.OP_GREATER_EQ);
+	this.defcode('<=', 0, OpCode.OP_LESS_EQ);
+	this.defcode('<', 0, OpCode.OP_LESS);
     }
 
     offsetIp(numCells) {
@@ -1613,6 +1640,18 @@ class ForthVM {
 	    break;
 	case OpCode.OP_RUN_LEAVE:
 	    this.runLeave();
+	    break;
+	case OpCode.OP_BEGIN:
+	    this.begin();
+	    break;
+	case OpCode.OP_UNTIL:
+	    this.until();
+	    break;
+	case OpCode.OP_WHILE:
+	    this.opWhile();
+	    break;
+	case OpCode.OP_REPEAT:
+	    this.repeat();
 	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
@@ -2011,6 +2050,46 @@ class ForthVM {
 	}
     }
 
+    greater() {
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	if(a > b) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
+    greaterEq() {
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	if(a >= b) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
+    less() {
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	if(a < b) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
+    lessEq() {
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	if(a <= b) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
     zeroEq() {
 	if(this.stack.pop() === 0) {
 	    this.pushTrue();
@@ -2210,6 +2289,53 @@ class ForthVM {
 
     opJ() {
 	this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 3));
+    }
+
+    begin() {
+	if(this.state === -1) {
+	    this.stack.pushControl(this.dp, 'dest');
+	    this.controlFlowUnresolved -= 1;
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+    }
+
+    repeat() {
+	if(this.state === -1) {
+	    this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "BRANCH"), this.dp));
+	    this.offsetDp(-this.dp + this.writeUint32(this.stack.popControl('dest'), this.dp));
+	    this.memory[this.stack.popControl('orig')] = this.dp;
+	    this.controlFlowUnresolved += 1;
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+    }
+
+    until() {
+	if(this.state === -1) {
+	    this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "0BRANCH"), this.dp));
+	    this.offsetDp(-this.dp + this.writeUint32(this.stack.popControl('dest'), this.dp));
+	    this.controlFlowUnresolved += 1;
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+    }
+
+    opWhile() {
+	if(this.state === -1) {
+	    if(this.unresolvedControlFlow()) {
+		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "0BRANCH"), this.dp));
+		let dest = this.stack.popControl('dest');
+		this.stack.pushControl(this.dp, 'orig');
+		this.stack.pushControl(dest, 'dest');
+		this.offsetDp(-this.dp + this.writeUint32(0, this.dp));
+	    } else {
+		this.abort('Cannot use while without matching begin');
+	    }
+	} else {
+	    this.abort('Cannot use control flow construct in interpret mode');
+	}
+
     }
 
     process() {
