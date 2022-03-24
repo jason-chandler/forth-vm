@@ -1814,9 +1814,6 @@ class ForthVM {
     }
 
     colon() {
-	if(this.state === -1) {
-	    this.abort('Cannot nest colon definitions');
-	}
 	this.sysMark = this.dp;
 	this.bl();
 	this.parse();
@@ -1825,7 +1822,6 @@ class ForthVM {
 	if(name === undefined || name === null || name.trim() === '') {
 	    this.abort('Word name cannot be blank for colon definition');
 	}
-	this.ip = this.dp;
 	Word.newWord(this, name, 0, this.cfaXtArray[0]);
     }
 
@@ -1895,7 +1891,6 @@ class ForthVM {
 		    let top = this.ip;
 		    this.rPush(top);
 		    this.debug('Rpushed: ' + this.rstack.empty(this.debugFn(this.rstack.print, this.rstack)));
-		    
 		    this.jmp(word.cfa);
 		    this.debug('word.cfa: ' + word.cfa);
 		    this.docol();
@@ -1926,13 +1921,8 @@ class ForthVM {
 		    if(this.ip === top && !this.rstack.empty()) {
 			this.exit();
 		    }
-
 		} else {
-		    if(word.name !== ':') {
-			this.offsetDp(-this.dp + this.writeUint32(word.cfa, this.dp));
-		    } else {
-			this.abort('Cannot compile ' + word.name + ' to a definition');
-		    }
+		    this.offsetDp(-this.dp + this.writeUint32(word.cfa, this.dp));
 		}
 	    } else if (this.number(str)) {
 		this.doNumber(str)
@@ -2340,9 +2330,7 @@ class ForthVM {
 
     process() {
 	    try {
-		if(!this.rstack.empty()) {
-		    this.docol();
-		} else if (!this.inputBuffer.empty()) {
+		if (!this.inputBuffer.empty()) {
 		    this.processInputBuffer();
 		}
 		this.systemOut.log('ok');
