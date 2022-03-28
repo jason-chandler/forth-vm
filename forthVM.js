@@ -113,6 +113,22 @@ class OpCode {
     static OP_LESS = 82;
     static OP_GREATER_EQ = 83;
     static OP_LESS_EQ = 84;
+    static OP_INCLUDE = 85;
+    static OP_S_QUOTE = 86;
+    static OP_BACK_SLASH = 87;
+    static OP_BASE = 88;
+    static OP_DECIMAL = 89;
+    static OP_HEX = 90;
+    static OP_ABORT = 91;
+    static OP_ABORT_QUOTE = 92;
+    static OP_CELLS = 93;
+    static OP_CELL_PLUS = 94;
+    static OP_TICK = 95;
+    static OP_EXECUTE = 96;
+    static OP_ENVIRONMENT_Q = 97;
+    static OP_BRACKET_IF = 98;
+    static OP_BRACKET_ELSE = 99;
+    static OP_LPAREN = 100;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -353,12 +369,35 @@ class OpCode {
 	case OpCode.OP_REPEAT:
 	    return 'OP_REPEAT';
 	    break;
+	case OpCode.OP_INCLUDE:
+	    return 'OP_INCLUDE';
+	    break;
+	case OpCode.OP_S_QUOTE:
+	    return 'OP_S_QUOTE';
+	    break;
+	case OpCode.OP_BACKSLASH:
+	    return 'OP_BACKSLASH';
+	    break;
+	case OpCode.OP_BASE:
+	    return 'OP_BASE';
+	    break;
+	case OpCode.OP_ABORT:
+	    return 'OP_ABORT';
+	    break;
+	case OpCode.OP_ABORT_QUOTE:
+	    return 'OP_ABORT_QUOTE';
+	    break;
+	case OpCode.OP_HEX:
+	    return 'OP_HEX';
+	    break;
+	case OpCode.OP_DECIMAL:
+	    return 'OP_DECIMAL';
+	    break;
 	}
     }
 }
 
 class Debug {
-    
     static {}
     static disassembleChunk(chunk) {
 	for(var offset = 0; offset < chunk.count;) {
@@ -596,6 +635,7 @@ class Word {
 class Stack {
     vm;
     memory;
+    signedMemory;
     s0; // below bottom of stack
     sp; // stack pointer
     cell_size;
@@ -604,6 +644,7 @@ class Stack {
     constructor(vm, s0, cell_size) {
 	this.vm = vm;
 	this.memory = vm.memory;
+	this.signedMemory = vm.signedMemory;
 	this.s0 = s0;
 	this.sp = this.s0 - 1; 
 	this.cell_size = cell_size;
@@ -633,14 +674,19 @@ class Stack {
 	this.control_indices.push({ index: (this.sp + 1), label: label });
     }
 
-    pop() {
+    pop(signed) {
 	if(this.empty()) {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
 	    if(this.control_indices.length === 0 || this.control_indices[this.control_indices.length - 1].index !== (this.sp + 1)) { 
 		this.sp++;
-		let val = this.memory[this.sp];
+		let val;
+		if(signed) {
+		    val = this.signedMemory[this.sp];
+		} else {
+		    val = this.memory[this.sp];
+		}
 		return val;
 	    } else {
 		throw('Control instruction ' + this.control_indices[this.control_indices.length - 1].label + ' cannot be used as a value');
@@ -743,6 +789,7 @@ class InputQueue {
     to_in;
     rp;
     rotation;
+    length;
 
     constructor(vm, address) {
 	this.vm = vm;
@@ -753,10 +800,15 @@ class InputQueue {
 	this.rp = this.ip;
 	this.to_in = 0;
 	this.rotation = 0;
+	this.length = 0;
     }
 
     empty() {
 	return this.rp === this.ip;
+    }
+
+    updateLength() {
+	this.length = this.rp - this.ip;
     }
 
     clear() {
@@ -766,6 +818,7 @@ class InputQueue {
 	this.ip = this.i0 - 1;
 	this.to_in = 0;
 	this.rotation = 0;
+	this.length = 0;
 	/*
 	while(this.ip !== this.i0 - 1) {
 	    this.vm.writeByte(0, this.ip);
@@ -784,6 +837,7 @@ class InputQueue {
 	    this.ip--;
 	    this.vm.debug(name.charCodeAt(i));
 	}
+	this.updateLength();
     }
 
     pop() {
@@ -798,6 +852,7 @@ class InputQueue {
 		this.rp--;
 		this.to_in++;
 	    }
+	    this.updateLength();
 	    if(this.rp === this.ip) {
 		this.rotation++;
 		if(this.rotation === 16) {
@@ -816,6 +871,7 @@ class InputQueue {
 	}
 	this.rp += len;
 	this.to_in -= len;
+	this.updateLength();
     }
 
     skip(len) {
@@ -824,6 +880,7 @@ class InputQueue {
 	}
 	this.rp -= len;
 	this.to_in += len;
+	this.updateLength();
     }
 
     rewriteAtRp(name) {
@@ -833,6 +890,7 @@ class InputQueue {
 	this.push(name);
 	this.ip = saveIp;
 	this.tos = saveTos;
+	this.updateLength();
     }
 
     print() {
@@ -856,6 +914,7 @@ class ForthVM {
     eax;
     memory_size;
     memory;
+    signedMemory;
     cell_size;
     ip;
     dp;
@@ -871,11 +930,14 @@ class ForthVM {
     exitXt;
     cfaXtArray;
     controlFlowUnresolved;
+    baseAddress;
+    environment;
 
     constructor() {
 	this.cell_size = 4; // in order to get a Uint32, new Uint32Array(memory.buffer, byteOffset, length_in_uint32s)
 	this.memory_size = 65536;
 	this.memory = new Uint32Array(this.memory_size);
+	this.signedMemory = new Int32Array(this.memory.buffer);
 	this.byteView = new Uint8Array(this.memory.buffer);
 	this.stack = new Stack(this, this.memory_size - 603, this.cell_size);
 	this.rstack = new Stack(this, this.memory_size - 402, this.cell_size);
@@ -883,8 +945,8 @@ class ForthVM {
 	this.cfstack = new Stack(this, this.memory_size - 804, this.cell_size);
 	this.jstack = [];
 	this.inputBuffer = new InputQueue(this, this.memory_size - 1005);
-	this.ip = 2; // program counter, current interp address
-	this.dp = 2;
+	this.ip = 3; // program counter, current interp address
+	this.dp = 3;
 	this.cdp = this.dp * this.cell_size; // char-aligned dictionary pointer
 	this.eax; // register for current value
 	this.latest = 0;
@@ -898,7 +960,14 @@ class ForthVM {
 	this.exitXt = Word.findXt(this, 'EXIT');
 	this.cfaXtArray = this.findCfaWords();
 	this.controlFlowUnresolved = 0;
+	this.string0 = (this.memory_size - 1406) * this.cell_size;
+	this.stringCap = (this.memory_size + 255) * this.cell_size;
+	this.stringPointer = this.string0;
+	this.baseAddress = 2 * this.cell_size;
+	this.byteView[this.baseAddress] = 10;
+	this.environment = { 'FLOATING': -1, 'FLOATING-STACK': -1, '/COUNTED-STRING': 255, '/HOLD': 255, 'ADDRESS-UNIT=BITS': 32, 'FLOORED': -1, 'RETURN-STACK-CELLS': 200, 'STACK-CELLS': 200 };
     }
+
 
     findCfaWords() {
 	let arr = [];
@@ -984,7 +1053,7 @@ class ForthVM {
     tick() {
 	this.bl();
 	this.parse();
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	this.stack.push(Word.findXt(this, name));
     }
 
@@ -992,10 +1061,16 @@ class ForthVM {
 	this.stack.push(this.cdp);
     }
 
+    execute() {
+	this.rPush(this.ip);
+	this.jmp(this.stack.pop());
+	this.docol();
+    }
+
     create() {
 	this.bl();
 	this.parse();
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	if(name === undefined || name === null || name.trim() === '') {
 	    this.abort('Word name cannot be blank for create definition');
 	}
@@ -1019,7 +1094,7 @@ class ForthVM {
     variable() {
 	this.bl();
 	this.parse();
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	if(name === undefined || name === null || name.trim() === '') {
 	    this.abort('Word name cannot be blank for variable definition');
 	}
@@ -1030,7 +1105,7 @@ class ForthVM {
     constant() {
 	this.bl();
 	this.parse();
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	if(name === undefined || name === null || name.trim() === '') {
 	    this.abort('Word name cannot be blank for constant definition');
 	}
@@ -1043,6 +1118,18 @@ class ForthVM {
     allot() {
 	let bytes = this.stack.pop();
 	this.offsetDp(bytes, true);
+    }
+
+    cells() {
+	this.stack.push(this.stack.pop() * this.cell_size);
+    }
+
+    cellPlus() {
+	this.stack.push(this.stack.pop() + this.cell_size);
+    }
+
+    base() {
+	this.stack.push(this.baseAddress);
     }
 
     comma() {
@@ -1090,16 +1177,23 @@ class ForthVM {
     }
     
     // Write a counted string and then align to cell size
-    writeCountedString(name, addr, charAligned) {
+    writeCountedString(name, addr, charAligned, noCount) {
 	let isIp;
 	if (addr === undefined) { addr = this.ip; isIp = true; };
-	let tempIp = this.getByteAddress(addr);
+	let tempIp;
+	if(charAligned) {
+	    tempIp = addr;
+	} else {
+	    tempIp = this.getByteAddress(addr);
+	}
 	let truncLength = Math.min(name.length, 255);
-	this.writeByte(truncLength, tempIp);
-	tempIp++;
+	if(noCount !== true) {
+	    this.writeByte(truncLength, tempIp);
+	    tempIp++;
+	}
 	for(var i = 0; i < truncLength; i++) {
 	    this.writeByte(name.charCodeAt(i), tempIp);
-	    tempIp++
+	    tempIp++;
 	    this.debug(name.charCodeAt(i));
 	}
 	// Make sure we line back up with cell size
@@ -1140,9 +1234,32 @@ class ForthVM {
 	let str = '';
 	for(var i = 0; i < len; i++) {
 	    str += String.fromCharCode(this.byteView[byteAddress]);
-	    byteAddress++
+	    byteAddress++;
 	}
 	return [len, str, this.readAlign(byteAddress)]; // 
+    }
+
+    readStringBasedOnSource(addr, isByteAddress, isLengthOnStack, isAddrOnStack) {
+	if(this.source_id === 0 || this.source_id === -1) {
+	    // input buffer grows downwards
+	    return this.readReversedCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack);
+	} else {
+	    return this.readCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack);
+	}
+    }
+
+    readStringFromStack() {
+	return this.readStringBasedOnSource(null, true, true, true)[1];
+    }
+
+    inputBufferEmpty() {
+	let inputBuffer;
+	if(this.source_id === 0 || this.source_id === -1) {
+	    // input buffer grows downwards
+	    return this.inputBuffer.length === 0;
+	} else {
+	    return this.source_id.length === 0;
+	}
     }
 
     readReversedCountedString(addr, isByteAddress, isLengthOnStack, isAddrOnStack) {
@@ -1291,6 +1408,91 @@ class ForthVM {
 	this.defcode('>=', 0, OpCode.OP_GREATER_EQ);
 	this.defcode('<=', 0, OpCode.OP_LESS_EQ);
 	this.defcode('<', 0, OpCode.OP_LESS);
+	this.defcode('INCLUDE', 0, OpCode.OP_INCLUDE);
+	this.defcode('S"', 1, OpCode.OP_S_QUOTE);
+	this.defcode('\\', 1, OpCode.OP_BACK_SLASH);
+	this.defcode('\n\\', 1, OpCode.OP_BACK_SLASH);
+	this.defcode('BASE', 0, OpCode.OP_BASE);
+	this.defcode('DECIMAL', 0, OpCode.OP_DECIMAL);
+	this.defcode('HEX', 0, OpCode.OP_HEX);
+	this.defcode('\n', 0, OpCode.OP_NOOP);
+	this.defcode('ABORT', 0, OpCode.OP_ABORT);
+	this.defcode('ABORT"', 0, OpCode.OP_ABORT_QUOTE);
+	this.defcode('CELLS', 0, OpCode.OP_CELLS);
+	this.defcode('CELL+', 0, OpCode.OP_CELL_PLUS);
+	this.defcode('\'', 0, OpCode.OP_TICK);
+	this.defcode('[\']', 1, OpCode.OP_TICK);
+	this.defcode('EXECUTE', 0, OpCode.OP_EXECUTE);
+	this.defcode('ENVIRONMENT?', 0, OpCode.OP_ENVIRONMENT_Q);
+	this.defcode('[IF]', 1, OpCode.OP_BRACKET_IF);
+	this.defcode('[ELSE]', 1, OpCode.OP_BRACKET_ELSE);
+	this.defcode('[THEN]', 1, OpCode.OP_NOOP);
+	this.defcode('(', 1, OpCode.OP_LPAREN);
+    }
+
+    bracketIf() {
+	let currentName;
+	let nestCount = 0;
+	if(this.stack.pop() === 0) {
+	    while((currentName !== '[ELSE]' && currentName !== '[THEN]') || nestCount >= 0) {
+		if(this.inputBufferEmpty()) {
+		    this.abort('COULD NOT FIND [IF] OR [ELSE] IN BUFFER');
+		}
+		this.parseName();
+		currentName = this.readStringFromStack();
+		if(currentName === '[IF]') {
+		    nestCount++;
+		} else if(currentName === '[THEN]') {
+		    nestCount--;
+		}
+		console.log('nest count: ' + nestCount);
+	    }
+	}
+    }
+
+    bracketElse() {
+	let currentName;
+	let nestCount = 0;
+	while(currentName !== '[THEN]' || nestCount >= 0) {
+	    if(this.inputBufferEmpty()) {
+		this.abort('COULD NOT FIND [THEN] IN BUFFER');
+	    }
+	    this.parseName();
+	    currentName = this.readStringFromStack();
+	    if(currentName === '[IF]') {
+		nestCount++;
+	    } else if(currentName === '[THEN]') {
+		nestCount--;
+	    }
+	}
+    }
+
+    lparen() {
+	this.stack.push(41);
+	this.parse(true);
+    }
+
+    environmentQ() {
+	let query = this.readStringFromStack();
+	let result = this.environment[query];
+	if(result === null || result === undefined) {
+	    this.result = 0;
+	} else {
+	    this.pushTrue();
+	}
+	this.stack.push(result);
+    }
+
+    writeStringToBuffer(name) {
+	if(this.stringPointer + name.length >= this.stringCap) {
+	    this.stringPointer = this.string0;
+	    if(this.string0 + name.length >= this.stringCap) {
+		this.abort('STRING TOO LARGE FOR BUFFER');
+	    }
+	}
+	let addr = this.stringPointer;
+	this.stringPointer = this.writeCountedString(name, this.stringPointer, true, true);
+	return addr;
     }
 
     offsetIp(numCells) {
@@ -1308,7 +1510,20 @@ class ForthVM {
     }
 
     noOp() {
-	this.offsetIp(1);
+	
+    }
+
+    decimal() {
+	this.byteView[this.baseAddress] = 10;
+    }
+
+    hex() {
+	this.byteView[this.baseAddress] = 16;
+    }
+
+    abortQuote() {
+	this.sQuote();
+	this.abort(this.readStringBasedOnSource(null, true, true, true)[1]);
     }
 
     swap() {
@@ -1384,6 +1599,7 @@ class ForthVM {
 
     quit() {
 	this.clearStacks();
+	this.source_id = -1;
     }
 
     forgetDefinitionInProgress() {
@@ -1653,6 +1869,54 @@ class ForthVM {
 	case OpCode.OP_REPEAT:
 	    this.repeat();
 	    break;
+	case OpCode.OP_INCLUDE:
+	    this.include();
+	    break;
+	case OpCode.OP_S_QUOTE:
+	    this.sQuote();
+	    break;
+	case OpCode.OP_BACK_SLASH:
+	    this.backSlash();
+	    break;
+	case OpCode.OP_BASE:
+	    this.base();
+	    break;
+	case OpCode.OP_HEX:
+	    this.hex();
+	    break;
+	case OpCode.OP_DECIMAL:
+	    this.decimal();
+	    break;
+	case OpCode.OP_ABORT:
+	    this.abort();
+	    break;
+	case OpCode.OP_ABORT_QUOTE:
+	    this.abortQuote();
+	    break;
+	case OpCode.OP_CELLS:
+	    this.cells();
+	    break;
+	case OpCode.OP_CELL_PLUS:
+	    this.cellPlus();
+	    break;
+	case OpCode.OP_TICK:
+	    this.tick();
+	    break;
+	case OpCode.OP_EXECUTE:
+	    this.execute();
+	    break;
+	case OpCode.OP_ENVIRONMENT_Q:
+	    this.environmentQ();
+	    break;
+	case OpCode.OP_BRACKET_IF:
+	    this.bracketIf();
+	    break;
+	case OpCode.OP_BRACKET_ELSE:
+	    this.bracketElse();
+	    break;
+	case OpCode.OP_LPAREN:
+	    this.lparen();
+	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
 	}
@@ -1692,7 +1956,7 @@ class ForthVM {
     }
 
     dot() {
-	this.systemOut.log(this.stack.pop());
+	this.systemOut.log(this.stack.pop(true));
     }
 
     dotS() {
@@ -1747,7 +2011,7 @@ class ForthVM {
 
     fetch() {
 	let addr = this.stack.pop();
-	this.stack.push(this.memory[addr]);
+	this.stack.push(this.byteView[addr]);
     }
 
     sp_fetch() {
@@ -1786,31 +2050,59 @@ class ForthVM {
 	this.specialInterpret = false;
     }
 
-    parse() {
+    parseName(skip) {
+	this.bl();
+	this.parse(skip);
+    }
+
+    parse(skip) {
 	let parseChar = String.fromCharCode(this.stack.pop());
 	let str = '';
-	// skip leading space after PARSE
-	if(!this.inputBuffer.empty()) {
-	    this.inputBuffer.pop();
+	let inputBuffer;
+	if(this.source_id === 0 || this.source_id === -1) {
+	    inputBuffer = this.inputBuffer;
+	} else {
+	    inputBuffer = this.source_id;
 	}
 	let nextWord = '';
-	while(!nextWord.includes(parseChar) && !this.inputBuffer.empty()) {
-	    nextWord = this.inputBuffer.pop();
+	if(inputBuffer.length !== 0) {
+	    let x = inputBuffer.pop();
+	    if(x.trim() !== '') {
+		nextWord = x;
+		str += nextWord;
+	    }
+	}
+	while(!nextWord.includes(parseChar) && inputBuffer.length !== 0) {
+	    nextWord = inputBuffer.pop();
 	    str += nextWord;
 	}
 	let split = str.split(parseChar);
-	this.inputBuffer.rewind(split[0].length + 1);
-	if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
-	    this.inputBuffer.rewind(split[1].length + 1);
+	let strAddress;
+	if(inputBuffer === this.inputBuffer) {
+	    this.inputBuffer.rewind(split[0].length + 1);
+	    if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
+		this.inputBuffer.rewind(split[1].length + 1);
+	    }
+	    this.inputBuffer.rewriteAtRp(split[0]);
+	    strAddress = this.inputBuffer.rp - 1;
+	    this.inputBuffer.skip(split[0].length + 1)
+	    if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
+		this.inputBuffer.rewriteAtRp(split[1]);
+	    }
+	} else {
+	    //console.log(split[0]);
+	    if(!skip) {
+		strAddress = this.writeStringToBuffer(split[0]);
+	    }
+	    if(split[1] !== null && split[1] !== undefined && split[1].length !== 0) {
+		inputBuffer.push(split[1]);
+	    }
 	}
-	this.inputBuffer.rewriteAtRp(split[0]);
-	let strAddress = this.inputBuffer.rp - 1;
-	this.inputBuffer.skip(split[0].length + 1)
-	if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
-	    this.inputBuffer.rewriteAtRp(split[1]);
+	if(!skip) {
+	    console.log('parsed: ' + split[0]);
+	    this.stack.push(strAddress);
+	    this.stack.push(split[0].length);
 	}
-	this.stack.push(strAddress);
-	this.stack.push(split[0].length);
     }
 
     colon() {
@@ -1818,7 +2110,7 @@ class ForthVM {
 	this.bl();
 	this.parse();
 	this.state = -1;
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	if(name === undefined || name === null || name.trim() === '') {
 	    this.abort('Word name cannot be blank for colon definition');
 	}
@@ -1848,18 +2140,20 @@ class ForthVM {
     doNumber(str) {
 	if(this.state === 0) {
 	    if(str.startsWith('0x') || str.startsWith('-0x')) {
-		this.stack.push(Number(str));
+		this.stack.push(parseInt(str, 16));
 	    } else if(str.includes('e')) {
 		this.fstack.push(Number(str));
 	    } else if(str.includes('.')) {
 		this.systemOut.log('Not implemented yet')
 	    } else {
-		this.stack.push(Number(str));
+		this.base();
+		this.fetch();
+		this.stack.push(parseInt(str, this.stack.pop()));
 	    }
 	} else {
 	    if(str.startsWith('0x') || str.startsWith('-0x')) {
 		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "LIT"), this.dp));
-		this.offsetDp(-this.dp + this.writeInt32(Number(str), this.dp));
+		this.offsetDp(-this.dp + this.writeInt32(parseInt(str, 16), this.dp));
 	    } else if(str.includes('e')) {
 		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "FLIT"), this.dp));
 		this.offsetDp(-this.dp + this.writeFloat32(Number(str), this.dp));
@@ -1867,23 +2161,40 @@ class ForthVM {
 		this.systemOut.log('Not implemented yet')
 	    } else {
 		this.offsetDp(-this.dp + this.writeUint32(Word.findXt(this, "LIT"), this.dp));
-		this.offsetDp(-this.dp + this.writeInt32(Number(str), this.dp));
+		this.base();
+		this.fetch();
+		this.offsetDp(-this.dp + this.writeInt32(parseInt(str, this.stack.pop()), this.dp));
 	    }
 	}
     }
 
     splitAndFilter(str) {
-	let blankFn = function(word) { return word !== '' && word !== '\n' && word !== undefined && word !== null; };
-	return String(str).trim().split(' ').filter(blankFn);
+	let blankFn = function(word) { return word !== '' && word !== undefined && word !== null; };
+	return String(str).trim().split('\r').join(' ').split('\t').join(' ').split(' ').filter(blankFn);
+    }
+
+    backSlash() {
+	this.stack.push(10);
+	this.parse(true);
     }
 
     processInputBuffer() {
-	while(!this.inputBuffer.empty()) {
-	    let str = this.inputBuffer.pop();
+	let inputPredicate;
+	let inputBuffer;
+	if(this.source_id === 0 || this.source_id === -1) {
+	    inputBuffer = this.inputBuffer;
+	    inputPredicate = function () { return inputBuffer.empty.call(inputBuffer) };
+	} else {
+	    inputBuffer = this.source_id;
+	    inputPredicate = function () { return inputBuffer.length === 0 };
+	}
+	while(!inputPredicate()) {
+	    let str = inputBuffer.pop();
 	    while(str === ' ') {
-		str = this.inputBuffer.pop();
+		str = inputBuffer.pop();
 	    }
 	    this.debug('input is: ' + str);
+	    console.log('input is: ' + str);
 	    this.debug(str);
 	    let word = this.find(str);
 	    if(word !== 0) {
@@ -1930,6 +2241,15 @@ class ForthVM {
 		this.abort(str + ' ?');
 	    }
 	}
+    }
+
+    writeAtDp(uint) {
+	this.offsetDp(-this.dp + this.writeUint32(uint, this.dp));
+    }
+
+    writeLitAtDp(uint) {
+	this.writeAtDp(Word.findXt(this, "LIT"));
+	this.writeAtDp(uint);
     }
 
     interpret(str) {
@@ -2111,7 +2431,7 @@ class ForthVM {
     postpone() {
 	this.bl();
 	this.parse();
-	let name = this.readReversedCountedString(null, true, true, true)[1];
+	let name = this.readStringBasedOnSource(null, true, true, true)[1];
 	this.writeUint32(Word.findXt(this, name), this.dp);
     }
 
@@ -2325,7 +2645,42 @@ class ForthVM {
 	} else {
 	    this.abort('Cannot use control flow construct in interpret mode');
 	}
+    }
 
+    sQuote() {
+	this.stack.push(34);
+	this.parse();
+	if(this.state === -1) {
+	    let len = this.stack.pop();
+	    let addr = this.stack.pop();
+	    this.writeLitAtDp(addr);
+	    this.writeLitAtDp(len);
+	}
+    }
+
+    include() {
+	let fileName = this.readStringBasedOnSource(null, true, true, true)[1];
+	let file = this.loadFile(fileName).replaceAll('\n\n', '\n').replaceAll('\n', ' \n ');
+	let temp_source_id = this.source_id;
+	let split = this.splitAndFilter(file);
+	for(var i = 1; i < split.length; i+=2) {
+	    split.splice(i, 0, ' ');
+	}
+	this.source_id = split.reverse();
+	console.log(this.source_id);
+	this.processInputBuffer();
+	this.source_id = temp_source_id;
+    }
+
+    loadFile(filePath) {
+	var result = null;
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.open("GET", location.href + filePath, false);
+	xmlhttp.send();
+	if (xmlhttp.status==200) {
+	    result = xmlhttp.responseText;
+	}
+	return result;
     }
 
     process() {
