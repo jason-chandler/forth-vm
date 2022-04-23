@@ -136,6 +136,27 @@ class OpCode {
     static OP_F_VALUE = 105;
     static OP_VALUE = 106;
     static OP_TO = 107;
+    static OP_F_TILDE = 108;
+    static OP_F_NEGATE = 109;
+    static OP_F_OVER = 110;
+    static OP_F_DUP = 111;
+    static OP_F_SWAP = 112;
+    static OP_F_DROP = 113;
+    static OP_FLOATS = 114;
+    static OP_F_DEPTH = 115;
+    static OP_NE = 116;
+    static OP_ZERO_EQ = 117;
+    static OP_ONE_PLUS = 118;
+    static OP_ONE_MINUS = 119;
+    static OP_OR = 120;
+    static OP_AND = 121;
+    static OP_XOR = 122;
+    static OP_PLUS_STORE = 123;
+    static OP_DEPTH = 124;
+    static OP_TYPE = 125;
+    static OP_SOURCE = 126;
+    static OP_CR = 127;
+    static OP_TO_IN = 128;
 
     static reverseLookup(val) {
 	switch(val) {
@@ -796,7 +817,6 @@ class InputQueue {
     tos;
     ip;
     to_in;
-    rp;
     rotation;
     length;
 
@@ -806,26 +826,28 @@ class InputQueue {
 	this.i0 = this.vm.getByteAddress(address);
 	this.ip = this.i0 - 1;
 	this.tos = this.ip;
-	this.rp = this.ip;
-	this.to_in = 0;
+	this.to_in = this.i0 + 4;
 	this.rotation = 0;
 	this.length = 0;
     }
 
+    rp() {
+	return this.i0 - 1 - this.vm.memory[this.to_in / this.vm.cell_size];
+    }
+
     empty() {
-	return this.rp === this.ip;
+	return this.rp() === this.ip;
     }
 
     updateLength() {
-	this.length = this.rp - this.ip;
+	this.length = this.rp() - this.ip;
     }
 
     clear() {
 	this.vm.debugFinest('clearing inputBuffer');
 	this.tos = this.i0 - 1;
-	this.rp = this.i0 - 1;
 	this.ip = this.i0 - 1;
-	this.to_in = 0;
+	this.vm.memory[this.to_in / this.vm.cell_size] = 0;
 	this.rotation = 0;
 	this.length = 0;
 	/*
@@ -852,17 +874,15 @@ class InputQueue {
     pop() {
 	// Max length is 255
 	if(!this.empty()) {
-	    let len = this.vm.byteView[this.rp];
-	    this.rp--;
-	    this.to_in++;
+	    let len = this.vm.byteView[this.rp()];
+	    this.vm.memory[this.to_in / this.vm.cell_size] += 1;
 	    let str = '';
 	    for(var i = 0; i < len; i++) {
-		str += String.fromCharCode(this.vm.byteView[this.rp]);
-		this.rp--;
-		this.to_in++;
+		str += String.fromCharCode(this.vm.byteView[this.rp()]);
+		this.vm.memory[this.to_in / this.vm.cell_size] += 1;
 	    }
 	    this.updateLength();
-	    if(this.rp === this.ip) {
+	    if(this.rp() === this.ip) {
 		this.rotation++;
 		if(this.rotation === 16) {
 		    this.clear();
@@ -875,27 +895,25 @@ class InputQueue {
     }
 
     rewind(len) {
-	if(this.rp + len >= this.i0) {
+	if(this.rp() + len >= this.i0) {
 	    this.vm.abort("INPUT BUFFER UNDERFLOW");
 	}
-	this.rp += len;
-	this.to_in -= len;
+	this.vm.memory[this.to_in / this.vm.cell_size] -= len;
 	this.updateLength();
     }
 
     skip(len) {
-	if(this.rp - len < this.ip) {
+	if(this.rp() - len < this.ip) {
 	    this.vm.abort("INPUT BUFFER OVERFLOW");
 	}
-	this.rp -= len;
-	this.to_in += len;
+	this.vm.memory[this.to_in / this.vm.cell_size] += len;
 	this.updateLength();
     }
 
     rewriteAtRp(name) {
 	let saveIp = this.ip;
 	let saveTos = this.tos;
-	this.ip = this.rp;
+	this.ip = this.rp();
 	this.push(name);
 	this.ip = saveIp;
 	this.tos = saveTos;
@@ -932,6 +950,7 @@ class ForthVM {
     systemOut;
     state;
     pad;
+    stringPad;
     debugMode;
     userMark;
     sysMark;
@@ -1132,6 +1151,14 @@ class ForthVM {
 	let word = Word.newWord(this, name, 0, this.cfaXtArray[5], 0);
 	new Float32Array(this.memory.buffer, word.pfa * 4, 1)[0] = this.fstack.pop();
 	Word.unhideLatest(this);
+    }
+
+    source() {
+	this.stack.push(this.source_id);
+    }
+
+    toIn() {
+	this.stack.push(this.inputBuffer.to_in);
     }
 
     to() {
@@ -1416,6 +1443,7 @@ class ForthVM {
 	this.defcode('.', 0, OpCode.OP_DOT);
 	this.defcode('.S', 0, OpCode.OP_DOT_S);
 	this.defcode('=', 0, OpCode.OP_EQ);
+	this.defcode('<>', 0, OpCode.OP_NE);
 	this.defcode('!', 0, OpCode.OP_STORE);
 	this.defcode('@', 0, OpCode.OP_FETCH);
 	this.defcode('DOVAR', 0, OpCode.OP_DOVAR);
@@ -1496,6 +1524,26 @@ class ForthVM {
 	this.defcode('VALUE', 0, OpCode.OP_VALUE);
 	this.defcode('FVALUE', 0, OpCode.OP_F_VALUE);
 	this.defcode('TO', 0, OpCode.OP_TO);
+	this.defcode('F~', 0, OpCode.OP_F_TILDE);
+	this.defcode('FNEGATE', 0, OpCode.OP_F_NEGATE);
+	this.defcode('FOVER', 0, OpCode.OP_F_OVER);
+	this.defcode('FDUP', 0, OpCode.OP_F_DUP);
+	this.defcode('FSWAP', 0, OpCode.OP_F_SWAP);
+	this.defcode('FDROP', 0, OpCode.OP_F_DROP);
+	this.defcode('FLOATS', 0, OpCode.OP_FLOATS);
+	this.defcode('FDEPTH', 0, OpCode.OP_F_DEPTH);
+	this.defcode('0=', 0, OpCode.OP_ZERO_EQ);
+	this.defcode('1+', 0, OpCode.OP_ONE_PLUS);
+	this.defcode('1-', 0, OpCode.OP_ONE_MINUS);
+	this.defcode('OR', 0, OpCode.OP_OR);
+	this.defcode('AND', 0, OpCode.OP_AND);
+	this.defcode('XOR', 0, OpCode.OP_XOR);
+	this.defcode('+!', 0, OpCode.OP_PLUS_STORE);
+	this.defcode('DEPTH', 0, OpCode.OP_DEPTH);
+	this.defcode('TYPE', 0, OpCode.OP_TYPE);
+	this.defcode('SOURCE', 0, OpCode.OP_SOURCE);
+	this.defcode('CR', 0, OpCode.OP_CR);
+	this.defcode('>IN', 0, OpCode.OP_TO_IN);
     }
 
     bracketIf() {
@@ -1574,6 +1622,7 @@ class ForthVM {
 	    this.dp += offset;
 	    this.cdp = this.dp * this.cell_size;
 	}
+	this.refreshPad();
     }
 
     noOp() {
@@ -1602,6 +1651,11 @@ class ForthVM {
 
     refreshPad() {
 	this.pad = this.dp + 200;
+	this.refreshStringPad();
+    }
+
+    refreshStringPad() {
+	this.stringPad = this.pad + 800;
     }
 
     //inline param
@@ -1782,6 +1836,9 @@ class ForthVM {
 	    break;
 	case OpCode.OP_EQ:
 	    this.eq();
+	    break;
+	case OpCode.OP_NE:
+	    this.ne();
 	    break;
 	case OpCode.OP_LESS:
 	    this.less();
@@ -2005,6 +2062,57 @@ class ForthVM {
 	case OpCode.OP_TO:
 	    this.to();
 	    break;
+	case OpCode.OP_F_TILDE:
+	    this.fTilde();
+	    break;
+	case OpCode.OP_F_NEGATE:
+	    this.fNegate();
+	    break;
+	case OpCode.OP_F_OVER:
+	    this.fOver();
+	    break;
+	case OpCode.OP_F_DUP:
+	    this.fDup();
+	    break;
+	case OpCode.OP_F_SWAP:
+	    this.fSwap();
+	    break;
+	case OpCode.OP_F_DROP:
+	    this.fDrop();
+	    break;
+	case OpCode.OP_FLOATS:
+	    this.floats();
+	    break;
+	case OpCode.OP_F_DEPTH:
+	    this.fDepth();
+	    break;
+	case OpCode.OP_OR:
+	    this.or();
+	    break;
+	case OpCode.OP_AND:
+	    this.and();
+	    break;
+	case OpCode.OP_XOR:
+	    this.xor();
+	    break;
+	case OpCode.OP_PLUS_STORE:
+	    this.plusStore();
+	    break;
+	case OpCode.OP_DEPTH:
+	    this.depth();
+	    break;
+	case OpCode.OP_TYPE:
+	    this.opType();
+	    break;
+	case OpCode.OP_SOURCE:
+	    this.source();
+	    break;
+	case OpCode.OP_CR:
+	    this.cr();
+	    break;
+	case OpCode.OP_TO_IN:
+	    this.toIn();
+	    break;
 	default:
 	    this.abort('Missing CODE: ' + prim);
 	}
@@ -2127,6 +2235,58 @@ class ForthVM {
 	this.memory[addr] = val;
     }
 
+    fTilde() {
+	let diff = this.fstack.pop();
+	let b = this.fstack.pop();
+	let a = this.fstack.pop();
+	let calc = Math.abs(a - b);
+	if((diff > 0.0 && calc < diff) || (diff === 0.0 && calc === diff) || (diff < 0.0 && calc < (Math.abs(diff) * (Math.abs(a) + Math.abs(b))))) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+    }
+
+    fNegate() {
+	this.fstack.push(this.fstack.pop() * -1);
+    }
+
+    fSwap() {
+	let top = this.fstack.pop();
+	let sec = this.fstack.pop();
+	this.fstack.push(top);
+	this.fstack.push(sec);
+    }
+
+    fDrop() {
+	this.fstack.pop();
+    }
+
+    fDup() {
+	let top = this.fstack.pop();
+	this.fstack.push(top);
+	this.fstack.push(top);
+    }
+
+    fOver() {
+	let top = this.fstack.pop();
+	let dup = this.fstack.pop();
+	this.fstack.push(dup);
+	this.fstack.push(top);
+	this.fstack.push(dup);
+    }
+
+    floats() {
+	this.stack.push(this.stack.pop());
+    }
+
+    depth() {
+	this.stack.push(this.stack.depth());
+    }
+
+    fDepth() {
+	this.stack.push(this.fstack.depth());
+    }
 
     sp_fetch() {
 	this.stack.push(this.stack.sp);
@@ -2136,6 +2296,12 @@ class ForthVM {
 	let addr = this.stack.pop();
 	let val = this.stack.pop();
 	this.memory[addr] = val;
+    }
+
+    plusStore() {
+	let addr = this.stack.pop();
+	let val = this.stack.pop();
+	this.memory[addr] += val;
     }
 
     bl() {
@@ -2198,7 +2364,7 @@ class ForthVM {
 		this.inputBuffer.rewind(split[1].length + 1);
 	    }
 	    this.inputBuffer.rewriteAtRp(split[0]);
-	    strAddress = this.inputBuffer.rp - 1;
+	    strAddress = this.inputBuffer.rp() - 1;
 	    this.inputBuffer.skip(split[0].length + 1)
 	    if(split[1] !== undefined && split[1] !== null && split[1].length !== 0) {
 		this.inputBuffer.rewriteAtRp(split[1]);
@@ -2460,6 +2626,17 @@ class ForthVM {
 	}
     }
 
+    ne() {
+	let b = this.stack.pop();
+	let a = this.stack.pop();
+	if(a !== b) {
+	    this.pushTrue();
+	} else {
+	    this.pushFalse();
+	}
+
+    }
+
     greater() {
 	let b = this.stack.pop();
 	let a = this.stack.pop();
@@ -2508,8 +2685,40 @@ class ForthVM {
 	}
     }
 
+    onePlus() {
+	let a = this.stack.pop();
+	this.stack.push(a + 1);
+    }
+
+    oneMinus() {
+	let a = this.stack.pop();
+	this.stack.push(a - 1);
+    }
+
     invert() {
-	this.stack.push(this.stack.pop() * -1 - 1);
+	//this.stack.push(this.stack.pop() * -1 - 1);
+	this.stack.push(~this.stack.pop());
+    }
+
+    or() {
+	this.stack.push(this.stack.pop() | this.stack.pop());
+    }
+
+    and() {
+	this.stack.push(this.stack.pop() & this.stack.pop());
+    }
+
+    xor() {
+	this.stack.push(this.stack.pop() ^ this.stack.pop());
+    }
+
+    opType() {
+	let a = this.readStringBasedOnSource(null, true, true, true)[1];
+	this.systemOut.log(a);
+    }
+
+    cr() {
+	this.systemOut.log('\n');
     }
 
     zeroBranch() {
@@ -2750,12 +2959,12 @@ class ForthVM {
     sQuote() {
 	this.stack.push(34);
 	this.parse();
-	if(this.state === -1) {
+	if(this.state !== 0) {
 	    let len = this.stack.pop();
 	    let addr = this.stack.pop();
 	    this.writeLitAtDp(addr);
 	    this.writeLitAtDp(len);
-	}
+	} 
     }
 
     include() {
@@ -2767,7 +2976,6 @@ class ForthVM {
 	    split.splice(i, 0, ' ');
 	}
 	this.source_id = split.reverse();
-	console.log(this.source_id);
 	this.processInputBuffer();
 	this.source_id = temp_source_id;
     }
