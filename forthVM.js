@@ -451,7 +451,7 @@ class Debug {
 }
 
 class Head {
-    Vm;
+    vm;
     name;
     address;
     link;
