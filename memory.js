@@ -12,5 +12,16 @@ class Memory {
     getUint32(offset) {
 	return this.view.getUint32(offset);
     }
-    
+
+    writeUint32(offset, value) {
+	this.view.setUint32(offset, value);
+    }
+
+    getByte(offset) {
+	return this.view.getUint8(offset);
+    }
+
+    writeByte(offset, value) {
+	this.view.setUint8(offset, value);
+    }
 }
