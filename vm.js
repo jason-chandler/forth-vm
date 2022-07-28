@@ -152,6 +152,64 @@ class Stack {
 
 }
 
+class Word {
+    address
+    name
+    link
+    immediate
+    codeWord
+    codeWord2
+    parameterField
+    vm
+
+    constructor(vm, address, name, immediate, codeWord, codeWord2) {
+	this.vm = vm;
+	this.address = address;
+	this.name = ('' + name).toUpperCase();
+	this.immediate = immediate;
+	this.codeWord = codeWord;
+	this.codeWord2 = codeWord2;
+	this.vm.debugTable[this.name] = address;
+    }
+
+    static fromAddress(vm, address) {
+	vm.stack.push(address);
+	let name = vm.readCountedString();
+	let immediate = vm.memory.getByte(address + name.length + 1);
+	return {address: address, name: name, immediate: immediate};
+    }
+    
+}
+
+class Memory {
+    buffer;
+    memorySize;
+    view;
+
+    constructor() {
+	this.memorySize = 65536 * 4;
+	this.buffer = new ArrayBuffer(this.memorySize);
+	this.view = new DataView(this.buffer);
+    }
+
+    getUint32(offset) {
+	return this.view.getUint32(offset);
+    }
+
+    writeUint32(offset, value) {
+	this.view.setUint32(offset, value);
+    }
+
+    getByte(offset) {
+	return this.view.getUint8(offset);
+    }
+
+    writeByte(offset, value) {
+	this.view.setUint8(offset, value);
+    }
+}
+
+
 const ForthVM = class {
     ip;
     dp;
@@ -160,12 +218,13 @@ const ForthVM = class {
     cellSize;
     memory;
     numCells;
-    dictionary;
     stack;
     rstack;
     state;
     toIn;
     tib;
+    latest;
+    debugTable;
     systemOut;
     
     constructor() {
@@ -179,6 +238,8 @@ const ForthVM = class {
 	this.tib = '';
 	this.state = 0;
 	this.toIn = 0;
+	this.latest = 0;
+	this.debugTable = {};
 	this.systemOut = window.console;
     }
 
@@ -366,6 +427,7 @@ const ForthVM = class {
 	    len = 0;
 	} else {
 	    len = line.length;
+	    console.log('length is ' + len);
 	}
 	this.toIn = 0;
 	while(this.toIn < len) {
@@ -378,17 +440,17 @@ const ForthVM = class {
     // DICTIONARY
 
     getDp() {
-	return this.vm.getDp();
+	return this.getDp();
     }
 
     setDp(dp) {
-	this.vm.setDp(dp);
+	this.setDp(dp);
     }
 
 
     readCountedString(addr) {
-	this.vm.push(addr);
-	return this.vm.readCountedString();
+	this.push(addr);
+	return this.readCountedString();
     }
 
     addWord(name, immediate, codeWord, codeWord2, parameterField) {
@@ -407,7 +469,7 @@ const ForthVM = class {
 
     getNameAndLinkFromAddr(addr) {
 	let name = this.readCountedString(addr);
-	let link = this.vm.getUint32(this.vm.align(addr + name.length));
+	let link = this.getUint32(this.align(addr + name.length));
 	return [name,link];
     }
 
@@ -433,7 +495,7 @@ const ForthVM = class {
 	let addr = this.find(String(name).toLocaleUpperCase());
 	if(addr !== 0) {
 	    addr += name.length + 1;
-	    addr = this.vm.align(addr) + (2 * this.vm.cellSize);
+	    addr = this.align(addr) + (2 * this.cellSize);
 	}
 	return addr;
     }
