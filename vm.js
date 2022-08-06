@@ -5,7 +5,6 @@
 class Stack {
     vm;
     memory;
-    signedMemory;
     s0; // below bottom of stack
     sp; // stack pointer
     cellSize;
@@ -14,20 +13,20 @@ class Stack {
     constructor(vm, s0) {
 	this.vm = vm;
 	this.memory = vm.memory;
-	this.signedMemory = vm.signedMemory;
 	this.s0 = s0;
-	this.sp = this.s0 - 1; 
+
 	this.cellSize = this.vm.cellSize;
-	this.stack_limit = 200;
+	this.sp = this.s0 - this.cellSize; 
+	this.stack_limit = 200 * this.cellSize;
 	this.control_indices = [];
     }
 
     empty() {
-	return this.sp === this.s0 - 1;
+	return this.sp === this.s0 - this.cellSize;
     }
 
     depth() {
-	return this.s0 - 1 - this.sp;
+	return (this.s0 - this.cellSize - this.sp) / this.cellSize;
     }
 
     push(val) {
@@ -35,13 +34,14 @@ class Stack {
 	    this.vm.systemOut.log("STACK OVERFLOW: " + val);
 	    throw("STACK OVERFLOW: " + val);
 	} else {
-	    this.memory[this.sp--] = val;
+	    this.memory.setUint32(this.sp, val);
+	    this.sp -= this.cellSize;
 	}
     }
 
     pushControl(val, label) {
 	this.push(val);
-	this.control_indices.push({ index: (this.sp + 1), label: label });
+	this.control_indices.push({ index: (this.sp + this.cellSize), label: label });
     }
 
     pop(signed) {
@@ -49,38 +49,38 @@ class Stack {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
-	    if(this.control_indices.length === 0 || this.control_indices[this.control_indices.length - 1].index !== (this.sp + 1)) { 
-		this.sp++;
+	    if(this.control_indices.length === 0 || this.control_indices[this.control_indices.length - this.cellSize].index !== (this.sp + this.cellSize)) { 
+		this.sp += this.cellSize;
 		let val;
 		if(signed) {
-		    val = this.signedMemory[this.sp];
+		    val = this.memory.getInt32(this.sp);
 		} else {
-		    val = this.memory[this.sp];
+		    val = this.memory.getUint32(this.sp);
 		}
 		return val;
 	    } else {
-		throw('Control instruction ' + this.control_indices[this.control_indices.length - 1].label + ' cannot be used as a value');
+		throw('Control instruction ' + this.control_indices[this.control_indices.length - this.cellSize].label + ' cannot be used as a value');
 	    }
 	}
     }
 
     popControl(label) {
 	let ctrl = this.control_indices.pop();
-	if(ctrl.index === (this.sp + 1) && ctrl.label === label)
+	if(ctrl.index === (this.sp + this.cellSize) && ctrl.label === label)
 	{
 	    return this.pop();
 	} else {
-	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + 1) + ' ' + label);
+	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + this.cellSize) + ' ' + label);
 	}
     }
 
     popControlSkipLeave(label) {
 	let leaveStack = [];
-	for(var i = this.depth() - 1; i >= 0 && this.peekControl() === 'leave-sys'; i--) {
+	for(var i = this.depth() - this.cellSize; i >= 0 && this.peekControl() === 'leave-sys'; i -= this.cellSize) {
 	    leaveStack.push(this.popControl('leave-sys'));
 	}
 	let ctrl = this.control_indices.pop();
-	if(ctrl.index === (this.sp + 1) && ctrl.label === label)
+	if(ctrl.index === (this.sp + this.cellSize) && ctrl.label === label)
 	{
 	    let val = this.pop();
 	    while(leaveStack.length !== 0) {
@@ -88,13 +88,13 @@ class Stack {
 	    }
 	    return val;
 	} else {
-	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + 1) + ' ' + label);
+	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + this.cellSize) + ' ' + label);
 	}
     }
 
     peekControl() {
 	if(this.control_indices.length > 0) {
-	    let ctrl = this.control_indices[this.control_indices.length - 1];
+	    let ctrl = this.control_indices[this.control_indices.length - this.cellSize];
 	    return ctrl.label;
 	} else {
 	    return '';
@@ -102,8 +102,8 @@ class Stack {
     }
 
     pick(index) {
-	if(index < (this.depth() - 1)) {
-	    return this.memory[this.s0 - 1 - index];
+	if(index < (this.depth() - this.cellSize)) {
+	    return this.memory.getUint32(this.s0 - this.cellSize - index);
 	} else {
 	    throw('CONTROL STACK UNDERFLOW');
 	}
@@ -112,7 +112,7 @@ class Stack {
     pickControl(index, label) {
 	if(index < this.control_indices.length) {
 	    if(label === this.control_indices[index].label) {
-		return this.memory[this.s0 - 1 - index];
+		return this.memory.getUint32(this.s0 - this.cellSize - index);
 	    } else {
 		throw('Control flow mismatch, ' + index + ' ' + this.control_indices[index].label + ' was found while seeking ' + index + ' ' + label);
 	    }
@@ -122,9 +122,9 @@ class Stack {
     }
 
     clear() {
-	while(this.sp !== (this.s0 - 1)) {
-	    this.vm.memory[this.sp] = 0;
-	    this.sp++;
+	while(this.sp !== (this.s0 - this.cellSize)) {
+	    this.vm.memory.setUint32(this.sp, 0);
+	    this.sp += this.cellSize;
 	}
 	this.control_indices = [];
     }
@@ -132,8 +132,8 @@ class Stack {
     print() {
 	let buf = [];
 	let count = 0;
-	for(var i = this.s0 - 1; i !== this.sp; i--) {
-	    buf.push(this.vm.memory[i]);
+	for(var i = this.s0 - this.cellSize; i !== this.sp; i -= this.cellSize) {
+	    buf.push(this.vm.memory.getUint32(i));
 	    this.vm.systemOut.log(count);
 	    count++;
 	}
@@ -143,8 +143,8 @@ class Stack {
     toJSArray() {
 	let buf = [];
 	let count = 0;
-	for(var i = this.s0 - 1; i !== this.sp; i--) {
-	    buf.push(this.vm.memory[i]);
+	for(var i = this.s0 - this.cellSize; i !== this.sp; i -= this.cellSize) {
+	    buf.push(this.vm.memory.getUint32(i));
 	    count++;
 	}
 	return buf;
@@ -162,14 +162,17 @@ class Word {
     parameterField
     vm
 
-    constructor(vm, address, name, immediate, codeWord, codeWord2) {
+    constructor(vm, address, name, immediate, codeWord, codeWord2, parameterField) {
 	this.vm = vm;
 	this.address = address;
+	this.link = this.vm.latest;
 	this.name = ('' + name).toUpperCase();
 	this.immediate = immediate;
 	this.codeWord = codeWord;
 	this.codeWord2 = codeWord2;
 	this.vm.debugTable[this.name] = address;
+	this.parameterField = parameterField;
+	// new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, parameterField);
     }
 
     static fromAddress(vm, address) {
@@ -196,15 +199,23 @@ class Memory {
 	return this.view.getUint32(offset);
     }
 
-    writeUint32(offset, value) {
+    setUint32(offset, value) {
 	this.view.setUint32(offset, value);
+    }
+
+    getInt32(offset) {
+	return this.view.getInt32(offset);
+    }
+
+    setInt32(offset, value) {
+	this.view.setInt32(offset, value);
     }
 
     getByte(offset) {
 	return this.view.getUint8(offset);
     }
 
-    writeByte(offset, value) {
+    setByte(offset, value) {
 	this.view.setUint8(offset, value);
     }
 }
@@ -224,6 +235,7 @@ const ForthVM = class {
     toIn;
     tib;
     latest;
+    codeTable;
     debugTable;
     systemOut;
     
@@ -233,14 +245,16 @@ const ForthVM = class {
 	this.numCells = this.memory.memorySize / this.cellSize;
 	this.ip = 8;
 	this.dp = 8;
-	this.stack = new Stack(this, this.numCells - 603);
-	this.rstack = new Stack(this, this.numCells - 402);
+	this.stack = new Stack(this, this.memory.memorySize - (603 * this.cellSize));
+	this.rstack = new Stack(this, this.memory.memorySize - (402 * this.cellSize));
 	this.tib = '';
 	this.state = 0;
 	this.toIn = 0;
 	this.latest = 0;
 	this.debugTable = {};
+	this.codeTable = [];
 	this.systemOut = window.console;
+	this.initCodeWords();
     }
 
     getIp() {
@@ -295,16 +309,16 @@ const ForthVM = class {
     }
 
     writeHere(val) {
-	this.memory.writeUint32(this.dp, val);
+	this.memory.setUint32(this.dp, val);
 	this.offsetDp(this.cellSize);
     }
 
     write(offset, val) {
-	this.memory.writeUint32(offset, val);
+	this.memory.setUint32(offset, val);
     }
 
     writeC(offset, val) {
-	this.memory.writeByte(offset, val);
+	this.memory.setByte(offset, val);
     }
 
     writeString(offset, str) {
@@ -325,30 +339,38 @@ const ForthVM = class {
     }
 
     writeCHere(cval) {
-	this.memory.writeByte(this.dp, cval);
+	this.memory.setByte(this.dp, cval);
+	console.log('setting ' + this.dp + ' to ' + cval);
 	this.offsetDp(1);
+	console.log('dp ' + this.dp);
+	console.log(this.memory.getByte(this.dp - 1));
     }
 
     writeStringHere(str) {
-	for(ch of str) {
+	for(const ch of str) {
 	    this.writeCHere(ch);
 	}
     }
 
     writeCountedStringHere(str) {
 	this.writeCHere(str.length);
+	console.log('length written ' + str.length);
 	this.writeStringHere(str);
     }
 
     readCountedString() {
 	let str = "";
 	let loc = this.stack.pop();
-	len = this.memory.getByte(loc);
+	console.log('reading from loc ' + loc);
+	let len = this.memory.getByte(loc);
+	console.log('read len is ' + len);
 	loc++;
 	for(let i = 0; i < len; i++) {
 	    str += this.memory.getByte(loc);
 	    loc++;
+	    console.log('str so far is ' + str);
 	}
+	return str;
     }
 
     getW() {
@@ -368,6 +390,7 @@ const ForthVM = class {
     }
 
     jmpEax() {
+	console.log('EAX ' + this.memory.getUint32(this.eax));
 	this.callCode(this.memory.getUint32(this.eax));
 	/*
 	if(this.memory.getUint32(this.eax) === 1) {
@@ -380,6 +403,7 @@ const ForthVM = class {
     }
 
     next() {
+	console.log('calling next');
 	this.setW(this.memory.getUint32(this.ip)); // w is now the CFA
 	this.offsetIp(this.cellSize);
 	this.ldEax(this.memory.getUint32(this.w)); // eax is now contents of code field or the CFA of the (CFA)
@@ -392,6 +416,10 @@ const ForthVM = class {
 	return character !== ' ' && character !== '\n';
     }
 
+    isNumber(word) {
+	'number' === typeof(word);
+    }
+
     getNextWord() {
 	let word = '';
 	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.toIn])) {
@@ -402,13 +430,19 @@ const ForthVM = class {
     }
 
     processWord(word) {
+	console.log('processing ' + word);
+	console.log('stuck');
 	let foundWord = this.findWord(word);
-	let isWord = foundWord !== null && foundWord !== undefined;
+	console.log('made it here')
+	let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
+	console.log('past found');
 	if(isWord) {
 	    if(foundWord.immediate === -1 || this.state === 0) {
 		this.ip = foundWord.cfa;
+		console.log('ip ' + this.ip);
 		this.next();
 	    } else {
+		console.log('writing ip ' + this.ip);
 		this.writeHere(foundWord);
 	    }
 	} else if(this.isNumber(word)) {
@@ -437,6 +471,23 @@ const ForthVM = class {
 	}
     }
 
+    writeWord(word, hidden) {
+	this.writeHere(word.link);
+	this.writeCountedStringHere(word.name);
+	this.alignDp();
+	this.writeHere(word.immediate);
+	this.writeHere(word.codeWord);
+	this.writeHere(word.codeWord2);
+	if(word.parameterField !== undefined) {
+	    for(let addr of word.parameterField) {
+		this.writeHere(addr);
+	    }
+	}
+	if(!hidden) {
+	    this.latest = word.address;
+	}
+    }
+
     // DICTIONARY
 
     getDp() {
@@ -447,29 +498,36 @@ const ForthVM = class {
 	this.setDp(dp);
     }
 
-
-    readCountedString(addr) {
-	this.push(addr);
-	return this.readCountedString();
-    }
-
     addWord(name, immediate, codeWord, codeWord2, parameterField) {
-	let word = new Word(address, name, immediate, codeWord, codeWord2, parameterField, this.latest);
+	this.alignDp();
+	let word = new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, parameterField);
 	this.writeWord(word);
     }
 
-    addCode(address, name, immediate, codeIndex) {
-	let word = new Word(address, name, immediate, 1, 0, codeIndex, this.latest);
+    addCode(immediate, index, fn) {
+	let name = fn.name;
+	this.alignDp();
+	this.codeTable[index] = fn;
+	console.log(index);
+	console.log(fn);
+	let parameterField = new Array(1);
+	parameterField[0] = index;
+	let word = new Word(this, this.dp, name.toUpperCase(), immediate, 1, 0, parameterField);
 	this.writeWord(word);
     }
 
-    callCode(addr) {
-	this.codeTable.getCode(addr).call();
+    callCode(index) {
+	this.codeTable[index].call(this);
     }
 
     getNameAndLinkFromAddr(addr) {
-	let name = this.readCountedString(addr);
-	let link = this.getUint32(this.align(addr + name.length));
+	let link = this.memory.getUint32(addr);
+	console.log('addr checked: ' + addr);
+	console.log(addr + this.cellSize);
+	this.push(addr + this.cellSize);
+	let name = this.readCountedString();
+	console.log ('Link: ' + link + ' Name: ' + name);
+	
 	return [name,link];
     }
 
@@ -478,11 +536,12 @@ const ForthVM = class {
 	    throw("Forth VM has no definitions!");
 	}
 	let tempAddr = this.latest;
+	console.log('latest ' + this.latest);
 	while(tempAddr !== 0) {
 	    let check = this.getNameAndLinkFromAddr(tempAddr);
 	    let tempName = check[0];
 	    let tempLink = check[1];
-	    if(String(tempName).toLocaleUpperCase() === String(name).toLocaleUpperCase()) {
+	    if(String(tempName).toUpperCase() === String(name).toUpperCase()) {
 		return tempAddr;
 	    } else {
 		tempAddr = tempLink;
@@ -501,13 +560,27 @@ const ForthVM = class {
     }
 
     findWord(name) {
-	let addr = this.find(String(name).toLocaleUpperCase());
+	let addr = this.find(String(name).toUpperCase());
+	console.log('found at addr ' + addr)
 	if (addr === 0) {
 	    return 0;
 	} else {
-	    return Word.fromDict(String(name).toLocaleUpperCase(), addr);
+	    return Word.fromDict(String(name).toUpperCase(), addr);
 	}
-    }    
+    }
+
+    initCodeWords() {
+	let index = 0;
+	this.addCode(0, index++, function swap() {
+	    console.log('hit');
+	    let a = this.stack.pop();
+	    console.log(a);
+	    let b = this.stack.pop();
+	    console.log(b)
+	    this.stack.push(a);
+	    this.stack.push(b);
+	})
+    }
 }
 
 //window.ForthVM = ForthVM;
