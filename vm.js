@@ -339,8 +339,9 @@ const ForthVM = class {
     }
 
     writeCHere(cval) {
-	this.memory.setByte(this.dp, cval);
-	console.log('setting ' + this.dp + ' to ' + cval);
+	let writeByte = typeof(cval) === 'string' ? cval.charCodeAt() : cval;
+	this.memory.setByte(this.dp, writeByte);
+	console.log('setting ' + this.dp + ' to ' + cval + ' ' + writeByte);
 	this.offsetDp(1);
 	console.log('dp ' + this.dp);
 	console.log(this.memory.getByte(this.dp - 1));
@@ -366,7 +367,7 @@ const ForthVM = class {
 	console.log('read len is ' + len);
 	loc++;
 	for(let i = 0; i < len; i++) {
-	    str += this.memory.getByte(loc);
+	    str += String.fromCharCode(this.memory.getByte(loc));
 	    loc++;
 	    console.log('str so far is ' + str);
 	}
@@ -417,7 +418,7 @@ const ForthVM = class {
     }
 
     isNumber(word) {
-	'number' === typeof(word);
+	return new Number(word) !== 'NaN';
     }
 
     getNextWord() {
@@ -436,6 +437,7 @@ const ForthVM = class {
 	console.log('made it here')
 	let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
 	console.log('past found');
+	console.log(this.isNumber(word));
 	if(isWord) {
 	    if(foundWord.immediate === -1 || this.state === 0) {
 		this.ip = foundWord.cfa;
@@ -447,6 +449,7 @@ const ForthVM = class {
 	    }
 	} else if(this.isNumber(word)) {
 	    if(this.state === 0) {
+		console.log('pushing ' + word);
 		this.stack.push(word);
 	    } else {
 		this.writeHere(word);
@@ -565,7 +568,7 @@ const ForthVM = class {
 	if (addr === 0) {
 	    return 0;
 	} else {
-	    return Word.fromDict(String(name).toUpperCase(), addr);
+	    return Word.fromAddress(this, addr);
 	}
     }
 
