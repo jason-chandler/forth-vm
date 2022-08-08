@@ -175,11 +175,20 @@ class Word {
 	// new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, parameterField);
     }
 
-    static fromAddress(vm, address) {
+    static fromAddress(vm, linkAddress) {
+	let address = linkAddress + vm.cellSize;
+	console.log('found address which should just be name is at ' + address);
 	vm.stack.push(address);
 	let name = vm.readCountedString();
-	let immediate = vm.memory.getByte(address + name.length + 1);
-	return {address: address, name: name, immediate: immediate};
+	let immediateAddress = vm.align(address + name.length + 1)
+	console.log('Immediate Address is ' + immediateAddress);
+	let immediate = vm.memory.getInt32(immediateAddress);
+	let cfa2 = immediateAddress + vm.cellSize;
+	let cfa = cfa2 + vm.cellSize;
+	let pfa = cfa + vm.cellSize;
+	let codeWord = vm.memory.getUint32(cfa);
+	let codeWord2 = vm.memory.getUint32(cfa2);
+	return {address: address, name: name, immediate: immediate, codeWord: codeWord, codeWord2: codeWord2, cfa: cfa, cfa2: cfa2, pfa: pfa};
     }
     
 }
@@ -224,8 +233,6 @@ class Memory {
 const ForthVM = class {
     ip;
     dp;
-    w;
-    eax;
     cellSize;
     memory;
     numCells;
@@ -310,6 +317,7 @@ const ForthVM = class {
 
     writeHere(val) {
 	this.memory.setUint32(this.dp, val);
+	console.log('wrote ' + val + ' at ' + this.dp);
 	this.offsetDp(this.cellSize);
     }
 
@@ -374,41 +382,17 @@ const ForthVM = class {
 	return str;
     }
 
-    getW() {
-	return this.w;
-    }
-
-    setW(w) {
-	this.w = w;
-    }
-
-    getEax() {
-	return this.eax;
-    }
-
-    ldEax(val) {
-	this.eax = val;
-    }
-
-    jmpEax() {
-	console.log('EAX ' + this.memory.getUint32(this.eax));
-	this.callCode(this.memory.getUint32(this.eax));
-	/*
-	if(this.memory.getUint32(this.eax) === 1) {
-	    let pfa = this.eax + this.cellSize; // the uint32 at PFA will get an OpCode of a primitive
-	    this.dictionary.callCode(this.memory.getUint32(pfa));
+    doCol() {
+	let selectedWord = this.memory.getUint32(this.ip);
+	console.log('selectedWord = ' + selectedWord);
+	// handle code
+	if(selectedWord === 0) {
+	    console.log('calling code at ' + (this.ip + this.cellSize));
+	    this.callCode(this.memory.getUint32(this.ip + this.cellSize));
 	} else {
-	    console.log('This shouldn\'t happen');
+	    this.rpush(selectedWord);
+	    this.rpush(this.ip + this.cellSize)
 	}
-	*/
-    }
-
-    next() {
-	console.log('calling next');
-	this.setW(this.memory.getUint32(this.ip)); // w is now the CFA
-	this.offsetIp(this.cellSize);
-	this.ldEax(this.memory.getUint32(this.w)); // eax is now contents of code field or the CFA of the (CFA)
-	this.jmpEax();
     }
 
     // OUTER INTERPRETER
@@ -418,7 +402,7 @@ const ForthVM = class {
     }
 
     isNumber(word) {
-	return new Number(word) !== 'NaN';
+	return new Number(word).valueOf !== NaN;
     }
 
     getNextWord() {
@@ -440,9 +424,12 @@ const ForthVM = class {
 	console.log(this.isNumber(word));
 	if(isWord) {
 	    if(foundWord.immediate === -1 || this.state === 0) {
-		this.ip = foundWord.cfa;
-		console.log('ip ' + this.ip);
-		this.next();
+		this.rpush(foundWord.cfa);
+		do {
+		    this.ip = this.rpop();
+		    console.log('ip ' + this.ip);
+		    this.doCol();
+		} while (this.rstack.depth() > 0);
 	    } else {
 		console.log('writing ip ' + this.ip);
 		this.writeHere(foundWord);
@@ -454,6 +441,8 @@ const ForthVM = class {
 	    } else {
 		this.writeHere(word);
 	    }
+	} else {
+	    throw(new Exception(word + ' ?'));
 	}
     }
 
@@ -478,9 +467,10 @@ const ForthVM = class {
 	this.writeHere(word.link);
 	this.writeCountedStringHere(word.name);
 	this.alignDp();
+	console.log('immediate written at ' + this.dp);
 	this.writeHere(word.immediate);
-	this.writeHere(word.codeWord);
 	this.writeHere(word.codeWord2);
+	this.writeHere(word.codeWord);
 	if(word.parameterField !== undefined) {
 	    for(let addr of word.parameterField) {
 		this.writeHere(addr);
@@ -507,19 +497,21 @@ const ForthVM = class {
 	this.writeWord(word);
     }
 
-    addCode(immediate, index, fn) {
-	let name = fn.name;
+    addCode(immediate, index, fn, fnName) {
+	let name = fnName === undefined ? fn.name.toUpperCase() : fnName.toUpperCase();
 	this.alignDp();
+	console.log('setting the code index ' + index + ' to ' + name);
 	this.codeTable[index] = fn;
 	console.log(index);
 	console.log(fn);
 	let parameterField = new Array(1);
 	parameterField[0] = index;
-	let word = new Word(this, this.dp, name.toUpperCase(), immediate, 1, 0, parameterField);
+	let word = new Word(this, this.dp, name, immediate, 0, 0, parameterField);
 	this.writeWord(word);
     }
 
     callCode(index) {
+	console.log('Calling code: ' + index);
 	this.codeTable[index].call(this);
     }
 
@@ -553,15 +545,6 @@ const ForthVM = class {
 	return tempAddr;
     }
 
-    findCFA(name) {
-	let addr = this.find(String(name).toLocaleUpperCase());
-	if(addr !== 0) {
-	    addr += name.length + 1;
-	    addr = this.align(addr) + (2 * this.cellSize);
-	}
-	return addr;
-    }
-
     findWord(name) {
 	let addr = this.find(String(name).toUpperCase());
 	console.log('found at addr ' + addr)
@@ -575,13 +558,15 @@ const ForthVM = class {
     initCodeWords() {
 	let index = 0;
 	this.addCode(0, index++, function swap() {
-	    console.log('hit');
 	    let a = this.stack.pop();
-	    console.log(a);
 	    let b = this.stack.pop();
-	    console.log(b)
 	    this.stack.push(a);
 	    this.stack.push(b);
+	})
+	this.addCode(0, index++, function dup() {
+	    let a = this.stack.pop();
+	    this.stack.push(a);
+	    this.stack.push(a);
 	})
     }
 }
