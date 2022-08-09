@@ -190,6 +190,11 @@ class Word {
 	let codeWord2 = vm.memory.getUint32(cfa2);
 	return {address: address, name: name, immediate: immediate, codeWord: codeWord, codeWord2: codeWord2, cfa: cfa, cfa2: cfa2, pfa: pfa};
     }
+
+    static getCFA(vm, linkAddress) {
+	let nameAddress = linkAddress + vm.cellSize;
+	return nameAddress + vm.align((1 + vm.memory.getByte(nameAddress))) + (vm.cellSize * 2);
+    }
     
 }
 
@@ -424,6 +429,14 @@ const ForthVM = class {
 	}
     }
 
+    clearHidden() {
+	if(this.hiddenWord) {
+	    this.latest = this.hiddenWord.address;
+	    console.log('set latest to ' + this.latest);
+	    this.hiddenWord = null;
+	}
+    }
+
     doCol() {
 	let selectedWord = this.memory.getUint32(this.ip);
 	console.log('selectedWord = ' + selectedWord);
@@ -432,8 +445,8 @@ const ForthVM = class {
 	    console.log('calling code at ' + (this.ip + this.cellSize));
 	    this.callCode(this.memory.getUint32(this.ip + this.cellSize));
 	} else {
-	    this.rpush(selectedWord);
 	    this.rpush(this.ip + this.cellSize)
+	    this.rpush(selectedWord);
 	}
     }
 
@@ -470,7 +483,7 @@ const ForthVM = class {
 		    this.doCol();
 		} while (this.rstack.depth() > 0);
 	    } else {
-		this.writeHere(foundWord.address);
+		this.writeHere(foundWord.cfa);
 	    }
 	} else if(this.isNumber(word)) {
 	    if(this.state === 0) {
@@ -516,6 +529,8 @@ const ForthVM = class {
 	}
 	if(!hidden) {
 	    this.latest = word.address;
+	} else {
+	    this.hiddenWord = word;
 	}
     }
 
@@ -529,10 +544,10 @@ const ForthVM = class {
 	this.setDp(dp);
     }
 
-    addWord(name, immediate, codeWord, codeWord2, parameterField) {
+    addWord(name, immediate, codeWord, codeWord2, hidden) {
 	this.alignDp();
-	let word = new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, parameterField);
-	this.writeWord(word);
+	let word = new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, []);
+	this.writeWord(word, hidden);
     }
 
     addCode(immediate, index, fn, fnName) {
@@ -618,6 +633,25 @@ const ForthVM = class {
 	this.addCode(0, index++, function bl() {
 	    this.stack.push(32);
 	})
+	this.addCode(0, index++, function docol() {
+	    
+	})
+	this.addCode(0, index++, function colon() {
+	    this.clearHidden();
+	    this.callCode(3); // BL
+	    this.callCode(2); // PARSE
+	    let name = this.readStringFromStack();
+	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCOL']), 0, true)
+	    this.state = 1;
+	}, ':')
+	this.addCode(0, index++, function exit() {
+	    this.rpop();
+	})
+	this.addCode(-1, index++, function semicolon() {
+	    this.writeHere(this.findWord('EXIT').cfa);
+	    this.clearHidden();
+	    this.state = 0;
+	}, ';')
     }
 
     getNextWord(endChar) {
