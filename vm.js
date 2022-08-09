@@ -245,6 +245,9 @@ const ForthVM = class {
     codeTable;
     debugTable;
     systemOut;
+    strBufStart;
+    strBufEnd;
+    strBufPointer;
     
     constructor() {
 	this.cellSize = 4;
@@ -254,6 +257,9 @@ const ForthVM = class {
 	this.dp = 8;
 	this.stack = new Stack(this, this.memory.memorySize - (603 * this.cellSize));
 	this.rstack = new Stack(this, this.memory.memorySize - (402 * this.cellSize));
+	this.strBufStart = this.memory.memorySize - (1006 * this.cellSize);
+	this.strBufEnd = this.memory.memorySize - (804 * this.cellSize);
+	this.strBufPointer = this.strBufStart;
 	this.tib = '';
 	this.state = 0;
 	this.toIn = 0;
@@ -326,12 +332,13 @@ const ForthVM = class {
     }
 
     writeC(offset, val) {
-	this.memory.setByte(offset, val);
+	let c = (typeof(val) !== 'number') ? val.charCodeAt() : c;
+	this.memory.setByte(offset, c);
     }
 
     writeString(offset, str) {
 	let i = offset;
-	for(ch of str) {
+	for(let ch of str) {
 	    this.writeC(i, ch);
 	    i++;
 	}
@@ -340,7 +347,7 @@ const ForthVM = class {
     writeCountedString(offset, str) {
 	this.writeC(offset, str.length);
 	let i = offset + 1;
-	for(ch of str) {
+	for(let ch of str) {
 	    this.writeC(i, ch);
 	    i++;
 	}
@@ -367,11 +374,24 @@ const ForthVM = class {
 	this.writeStringHere(str);
     }
 
+    readStringFromStack() {
+	let str = "";
+	let len = this.stack.pop()
+	let loc = this.stack.pop();
+	console.log('reading from loc ' + loc);
+	console.log('read len is ' + len);
+	for(let i = 0; i < len; i++) {
+	    str += String.fromCharCode(this.memory.getByte(loc + i));
+	    console.log('str so far is ' + str);
+	}
+	return str;
+    }
+
     readCountedString() {
 	let str = "";
 	let loc = this.stack.pop();
-	console.log('reading from loc ' + loc);
 	let len = this.memory.getByte(loc);
+	console.log('reading from loc ' + loc);
 	console.log('read len is ' + len);
 	loc++;
 	for(let i = 0; i < len; i++) {
@@ -380,6 +400,28 @@ const ForthVM = class {
 	    console.log('str so far is ' + str);
 	}
 	return str;
+    }
+
+    strBufSpace() {
+	return this.strBufEnd - this.strBufPointer - 1;
+    }
+
+    writeToStringBuffer(str) {
+	if((str.length + 1) > this.strBufSpace()) {
+	    if((str.length + 1) > (this.strBufEnd - this.strBufStart)) {
+		throw("String too large for buffer!");
+	    }
+	    this.strBufPointer = this.strBufStart;
+	}
+	this.stack.push(this.strBufPointer);
+	this.stack.push(str.length);
+	console.log('str buf pointer ' + this.strBufPointer);
+	this.writeString(this.strBufPointer, str);
+	this.strBufPointer += str.length + 1;
+	console.log('after ' + this.strBufPointer);
+	if(this.strBufPointer >= this.strBufEnd) {
+	    this.strBufPointer = this.strBufStart;
+	}
     }
 
     doCol() {
@@ -416,12 +458,9 @@ const ForthVM = class {
 
     processWord(word) {
 	console.log('processing ' + word);
-	console.log('stuck');
 	let foundWord = this.findWord(word);
-	console.log('made it here')
 	let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
 	console.log('past found');
-	console.log(this.isNumber(word));
 	if(isWord) {
 	    if(foundWord.immediate === -1 || this.state === 0) {
 		this.rpush(foundWord.cfa);
@@ -431,8 +470,7 @@ const ForthVM = class {
 		    this.doCol();
 		} while (this.rstack.depth() > 0);
 	    } else {
-		console.log('writing ip ' + this.ip);
-		this.writeHere(foundWord);
+		this.writeHere(foundWord.address);
 	    }
 	} else if(this.isNumber(word)) {
 	    if(this.state === 0) {
@@ -522,7 +560,6 @@ const ForthVM = class {
 	this.push(addr + this.cellSize);
 	let name = this.readCountedString();
 	console.log ('Link: ' + link + ' Name: ' + name);
-	
 	return [name,link];
     }
 
@@ -568,6 +605,28 @@ const ForthVM = class {
 	    this.stack.push(a);
 	    this.stack.push(a);
 	})
+	this.addCode(0, index++, function parse() {
+	    let parseChar = String.fromCharCode(this.stack.pop());
+	    let str = '';
+	    while(this.toIn < this.tib.length && this.tib[this.toIn] !== parseChar) {
+		str += this.tib[this.toIn];
+		this.toIn++;
+	    }
+	    this.toIn++;
+	    this.writeToStringBuffer(str);
+	})
+	this.addCode(0, index++, function bl() {
+	    this.stack.push(32);
+	})
+    }
+
+    getNextWord(endChar) {
+	let word = '';
+	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.toIn])) {
+	    word += this.tib[this.toIn];
+	    this.toIn++;
+	}
+	return word;
     }
 }
 
