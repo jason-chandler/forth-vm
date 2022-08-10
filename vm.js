@@ -685,6 +685,36 @@ const ForthVM = class {
 	this.addCode(0, index++, function d() {
 	    this.systemOut.log(this.stack.pop());
 	}, '.')
+	this.addCode(0, index++, function plus() {
+	    this.stack.push(this.stack.pop() + this.stack.pop());
+	}, '+')
+	this.addCode(0, index++, function minus() {
+	    const b = this.stack.pop();
+	    this.stack.push(this.stack.pop() - b);
+	}, '-')
+	this.addCode(0, index++, function star() {
+	    this.stack.push(this.stack.pop() * this.stack.pop());
+	}, '*')
+	this.addCode(0, index++, function slash() {
+	    const b = this.stack.pop();
+	    this.stack.push(Math.floor(this.stack.pop() / b));
+	}, '/')
+	this.addCode(0, index++, function mod() {
+	    const b = this.stack.pop();
+	    this.stack.push(this.stack.pop() % b);
+	})
+	this.addCode(0, index++, function slashmod() {
+	    const b = this.stack.pop();
+	    const a = this.stack.pop();
+	    this.stack.push(a % b);
+	    this.stack.push(Math.floor(a / b));
+	}, '/mod')
+	this.addCode(0, index++, function i() {
+	    this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 1));
+	})
+	this.addCode(0, index++, function j() {
+	    this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 3));
+	})
     }
 
     getNextWord(endChar) {
