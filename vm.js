@@ -621,6 +621,7 @@ const ForthVM = class {
 	    this.stack.push(a);
 	    this.stack.push(a);
 	})
+	const PARSE = index;
 	this.addCode(0, index++, function parse() {
 	    let parseChar = String.fromCharCode(this.stack.pop());
 	    let str = '';
@@ -631,6 +632,7 @@ const ForthVM = class {
 	    this.toIn++;
 	    this.writeToStringBuffer(str);
 	})
+	const BL = index;
 	this.addCode(0, index++, function bl() {
 	    this.stack.push(32);
 	})
@@ -639,9 +641,9 @@ const ForthVM = class {
 	})
 	this.addCode(0, index++, function colon() {
 	    this.clearHidden();
-	    this.callCode(3); // BL
-	    this.callCode(2); // PARSE
-	    let name = this.readStringFromStack();
+	    this.callCode(BL); // BL
+	    this.callCode(PARSE); // PARSE
+	    const name = this.readStringFromStack();
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCOL']), 0, true)
 	    this.state = 1;
 	}, ':')
@@ -657,6 +659,28 @@ const ForthVM = class {
 	    const nextAddr = this.rpop();
 	    this.stack.push(this.memory.getUint32(nextAddr));
 	    this.rpush(nextAddr + this.cellSize);
+	})
+	this.addCode(0, index++, function dotS() {
+	    this.stack.print();
+	}, '.s')
+	this.addCode(0, index++, function store() {
+	    const addr = this.stack.pop();
+	    const val = this.stack.pop();
+	    this.memory.setUint32(addr, val)
+	}, '!')
+	this.addCode(0, index++, function fetch() {
+	    this.stack.push(this.memory.getUint32(this.stack.pop()));
+	}, '@')
+	this.addCode(0, index++, function dovar() {
+	    this.stack.push(this.rpop());
+	})
+	this.addCode(0, index++, function variable() {
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
+	    this.offsetDp(this.cellSize);
 	})
     }
 
