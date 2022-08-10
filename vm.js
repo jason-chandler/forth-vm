@@ -490,6 +490,7 @@ const ForthVM = class {
 		console.log('pushing ' + word);
 		this.stack.push(word);
 	    } else {
+		this.writeHere(this.findWord('LITERAL').cfa);
 		this.writeHere(word);
 	    }
 	} else {
@@ -652,6 +653,11 @@ const ForthVM = class {
 	    this.clearHidden();
 	    this.state = 0;
 	}, ';')
+	this.addCode(0, index++, function literal() {
+	    const nextAddr = this.rpop();
+	    this.stack.push(this.memory.getUint32(nextAddr));
+	    this.rpush(nextAddr + this.cellSize);
+	})
     }
 
     getNextWord(endChar) {
