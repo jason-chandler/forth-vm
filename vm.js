@@ -682,6 +682,9 @@ const ForthVM = class {
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
 	    this.offsetDp(this.cellSize);
 	})
+	this.addCode(0, index++, function d() {
+	    this.systemOut.log(this.stack.pop());
+	}, '.')
     }
 
     getNextWord(endChar) {
