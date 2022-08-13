@@ -29,27 +29,25 @@ class Stack {
 	return (this.s0 - this.cellSize - this.sp) / this.cellSize;
     }
 
-    push(val) {
+    push(val, label) {
 	if(this.s0 - this.sp >= this.stack_limit) {
 	    this.vm.systemOut.log("STACK OVERFLOW: " + val);
 	    throw("STACK OVERFLOW: " + val);
 	} else {
 	    this.memory.setUint32(this.sp, val);
 	    this.sp -= this.cellSize;
+	    this.control_indices.push({ label: label });
 	}
     }
 
-    pushControl(val, label) {
-	this.push(val);
-	this.control_indices.push({ index: (this.sp + this.cellSize), label: label });
-    }
-
-    pop(signed) {
+    pop(signed, label) {
 	if(this.empty()) {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
-	    if(this.control_indices.length === 0 || this.control_indices[this.control_indices.length - this.cellSize].index !== (this.sp + this.cellSize)) { 
+	    let ctrl = this.control_indices.pop();
+	    if(ctrl.label === label)
+	    {
 		this.sp += this.cellSize;
 		let val;
 		if(signed) {
@@ -59,32 +57,22 @@ class Stack {
 		}
 		return val;
 	    } else {
-		throw('Control instruction ' + this.control_indices[this.control_indices.length - this.cellSize].label + ' cannot be used as a value');
+		throw('Control flow mismatch, ' + ' ' + ctrl.label + ' was found while seeking ' + label);
 	    }
-	}
-    }
-
-    popControl(label) {
-	let ctrl = this.control_indices.pop();
-	if(ctrl.index === (this.sp + this.cellSize) && ctrl.label === label)
-	{
-	    return this.pop();
-	} else {
-	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + this.cellSize) + ' ' + label);
 	}
     }
 
     popControlSkipLeave(label) {
 	let leaveStack = [];
 	for(var i = this.depth() - this.cellSize; i >= 0 && this.peekControl() === 'leave-sys'; i -= this.cellSize) {
-	    leaveStack.push(this.popControl('leave-sys'));
+	    leaveStack.push(this.pop(false, 'leave-sys'));
 	}
 	let ctrl = this.control_indices.pop();
 	if(ctrl.index === (this.sp + this.cellSize) && ctrl.label === label)
 	{
 	    let val = this.pop();
 	    while(leaveStack.length !== 0) {
-		this.pushControl(leaveStack.pop(), 'leave-sys');
+		this.push(leaveStack.pop(), 'leave-sys');
 	    }
 	    return val;
 	} else {
@@ -94,7 +82,7 @@ class Stack {
 
     peekControl() {
 	if(this.control_indices.length > 0) {
-	    let ctrl = this.control_indices[this.control_indices.length - this.cellSize];
+	    let ctrl = this.control_indices[this.control_indices.length - 1];
 	    return ctrl.label;
 	} else {
 	    return '';
@@ -134,7 +122,6 @@ class Stack {
 	let count = 0;
 	for(var i = this.s0 - this.cellSize; i !== this.sp; i -= this.cellSize) {
 	    buf.push(this.vm.memory.getUint32(i));
-	    this.vm.systemOut.log(count);
 	    count++;
 	}
 	this.vm.systemOut.log('<' + count + '> ' + buf);
@@ -177,11 +164,9 @@ class Word {
 
     static fromAddress(vm, linkAddress) {
 	let address = linkAddress + vm.cellSize;
-	console.log('found address which should just be name is at ' + address);
 	vm.stack.push(address);
 	let name = vm.readCountedString();
 	let immediateAddress = vm.align(address + name.length + 1)
-	console.log('Immediate Address is ' + immediateAddress);
 	let immediate = vm.memory.getInt32(immediateAddress);
 	let cfa2 = immediateAddress + vm.cellSize;
 	let cfa = cfa2 + vm.cellSize;
@@ -253,6 +238,7 @@ const ForthVM = class {
     strBufStart;
     strBufEnd;
     strBufPointer;
+    controlFlowUnresolved
     
     constructor() {
 	this.cellSize = 4;
@@ -272,6 +258,7 @@ const ForthVM = class {
 	this.debugTable = {};
 	this.codeTable = [];
 	this.systemOut = window.console;
+	this.controlFlowUnresolved = 0;
 	this.initCodeWords();
     }
 
@@ -299,20 +286,20 @@ const ForthVM = class {
 	this.dp += offset;
     }
 
-    push(val) {
-	this.stack.push(val);
+    push(val, label) {
+	this.stack.push(val, label);
     }
 
-    pop() {
-	return this.stack.pop();
+    pop(signed, label) {
+	return this.stack.pop(signed, label);
     }
 
-    rpush(val) {
-	this.rstack.push(val);
+    rpush(val, label) {
+	this.rstack.push(val, label);
     }
 
-    rpop() {
-	return this.rstack.pop();
+    rpop(signed, label) {
+	return this.rstack.pop(signed, label);
     }
 
     align(addr) {
@@ -328,7 +315,6 @@ const ForthVM = class {
 
     writeHere(val) {
 	this.memory.setUint32(this.dp, val);
-	console.log('wrote ' + val + ' at ' + this.dp);
 	this.offsetDp(this.cellSize);
     }
 
@@ -361,10 +347,7 @@ const ForthVM = class {
     writeCHere(cval) {
 	let writeByte = typeof(cval) === 'string' ? cval.charCodeAt() : cval;
 	this.memory.setByte(this.dp, writeByte);
-	console.log('setting ' + this.dp + ' to ' + cval + ' ' + writeByte);
 	this.offsetDp(1);
-	console.log('dp ' + this.dp);
-	console.log(this.memory.getByte(this.dp - 1));
     }
 
     writeStringHere(str) {
@@ -375,7 +358,6 @@ const ForthVM = class {
 
     writeCountedStringHere(str) {
 	this.writeCHere(str.length);
-	console.log('length written ' + str.length);
 	this.writeStringHere(str);
     }
 
@@ -383,11 +365,8 @@ const ForthVM = class {
 	let str = "";
 	let len = this.stack.pop()
 	let loc = this.stack.pop();
-	console.log('reading from loc ' + loc);
-	console.log('read len is ' + len);
 	for(let i = 0; i < len; i++) {
 	    str += String.fromCharCode(this.memory.getByte(loc + i));
-	    console.log('str so far is ' + str);
 	}
 	return str;
     }
@@ -396,13 +375,10 @@ const ForthVM = class {
 	let str = "";
 	let loc = this.stack.pop();
 	let len = this.memory.getByte(loc);
-	console.log('reading from loc ' + loc);
-	console.log('read len is ' + len);
 	loc++;
 	for(let i = 0; i < len; i++) {
 	    str += String.fromCharCode(this.memory.getByte(loc));
 	    loc++;
-	    console.log('str so far is ' + str);
 	}
 	return str;
     }
@@ -420,10 +396,8 @@ const ForthVM = class {
 	}
 	this.stack.push(this.strBufPointer);
 	this.stack.push(str.length);
-	console.log('str buf pointer ' + this.strBufPointer);
 	this.writeString(this.strBufPointer, str);
 	this.strBufPointer += str.length + 1;
-	console.log('after ' + this.strBufPointer);
 	if(this.strBufPointer >= this.strBufEnd) {
 	    this.strBufPointer = this.strBufStart;
 	}
@@ -432,21 +406,18 @@ const ForthVM = class {
     clearHidden() {
 	if(this.hiddenWord) {
 	    this.latest = this.hiddenWord.address;
-	    console.log('set latest to ' + this.latest);
 	    this.hiddenWord = null;
 	}
     }
 
     doCol() {
 	let selectedWord = this.memory.getUint32(this.ip);
-	console.log('selectedWord = ' + selectedWord);
 	// handle code
 	if(selectedWord === 0) {
-	    console.log('calling code at ' + (this.ip + this.cellSize));
 	    this.callCode(this.memory.getUint32(this.ip + this.cellSize));
 	} else {
-	    this.rpush(this.ip + this.cellSize)
-	    this.rpush(selectedWord);
+	    this.rpush(this.ip + this.cellSize, 'jump')
+	    this.rpush(selectedWord, 'jump');
 	}
     }
 
@@ -470,16 +441,13 @@ const ForthVM = class {
     }
 
     processWord(word) {
-	console.log('processing ' + word);
 	let foundWord = this.findWord(word);
 	let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
-	console.log('past found');
 	if(isWord) {
 	    if(foundWord.immediate === -1 || this.state === 0) {
-		this.rpush(foundWord.cfa);
+		this.rpush(foundWord.cfa, 'jump');
 		do {
-		    this.ip = this.rpop();
-		    console.log('ip ' + this.ip);
+		    this.ip = this.rpop(false, 'jump');
 		    this.doCol();
 		} while (this.rstack.depth() > 0);
 	    } else {
@@ -487,7 +455,6 @@ const ForthVM = class {
 	    }
 	} else if(this.isNumber(word)) {
 	    if(this.state === 0) {
-		console.log('pushing ' + word);
 		this.stack.push(word);
 	    } else {
 		this.writeHere(this.findWord('LITERAL').cfa);
@@ -505,7 +472,6 @@ const ForthVM = class {
 	    len = 0;
 	} else {
 	    len = line.length;
-	    console.log('length is ' + len);
 	}
 	this.toIn = 0;
 	while(this.toIn < len) {
@@ -519,7 +485,6 @@ const ForthVM = class {
 	this.writeHere(word.link);
 	this.writeCountedStringHere(word.name);
 	this.alignDp();
-	console.log('immediate written at ' + this.dp);
 	this.writeHere(word.immediate);
 	this.writeHere(word.codeWord2);
 	this.writeHere(word.codeWord);
@@ -533,6 +498,42 @@ const ForthVM = class {
 	} else {
 	    this.hiddenWord = word;
 	}
+    }
+
+    clearStacks() {
+	this.stack.clear();
+	this.rstack.clear();
+	this.controlFlowUnresolved = 0;
+	this.toIn = 0;
+	this.tib = '';
+    }
+
+    forgetWordBeingDefined() {
+	this.dp = this.hiddenWord.address;
+	this.state = 0;
+    }
+
+    unresolvedControlFlow() {
+	return this.controlFlowUnresolved < 0;
+    }
+
+    abort(reason) {
+	if(!reason) {
+	    reason = 'Abort called at ' + this.ip;
+	}
+	if(this.state === -1) {
+	    this.forgetWordBeingDefined();
+	}
+	this.clearStacks();
+	throw(reason);
+    }
+
+    pushTrue() {
+	this.stack.push(-1);
+    }
+
+    pushFalse() {
+	this.stack.push(0);
     }
 
     // DICTIONARY
@@ -554,10 +555,7 @@ const ForthVM = class {
     addCode(immediate, index, fn, fnName) {
 	let name = fnName === undefined ? fn.name.toUpperCase() : fnName.toUpperCase();
 	this.alignDp();
-	console.log('setting the code index ' + index + ' to ' + name);
 	this.codeTable[index] = fn;
-	console.log(index);
-	console.log(fn);
 	let parameterField = new Array(1);
 	parameterField[0] = index;
 	let word = new Word(this, this.dp, name, immediate, 0, 0, parameterField);
@@ -565,17 +563,13 @@ const ForthVM = class {
     }
 
     callCode(index) {
-	console.log('Calling code: ' + index);
 	this.codeTable[index].call(this);
     }
 
     getNameAndLinkFromAddr(addr) {
 	let link = this.memory.getUint32(addr);
-	console.log('addr checked: ' + addr);
-	console.log(addr + this.cellSize);
 	this.push(addr + this.cellSize);
 	let name = this.readCountedString();
-	console.log ('Link: ' + link + ' Name: ' + name);
 	return [name,link];
     }
 
@@ -584,7 +578,6 @@ const ForthVM = class {
 	    throw("Forth VM has no definitions!");
 	}
 	let tempAddr = this.latest;
-	console.log('latest ' + this.latest);
 	while(tempAddr !== 0) {
 	    let check = this.getNameAndLinkFromAddr(tempAddr);
 	    let tempName = check[0];
@@ -600,7 +593,6 @@ const ForthVM = class {
 
     findWord(name) {
 	let addr = this.find(String(name).toUpperCase());
-	console.log('found at addr ' + addr)
 	if (addr === 0) {
 	    return 0;
 	} else {
@@ -620,6 +612,14 @@ const ForthVM = class {
 	    let a = this.stack.pop();
 	    this.stack.push(a);
 	    this.stack.push(a);
+	})
+	this.addCode(0, index++, function rot() {
+	    let a = this.stack.pop();
+	    let b = this.stack.pop();
+	    let c = this.stack.pop();
+	    this.stack.push(b);
+	    this.stack.push(a);
+	    this.stack.push(c);
 	})
 	const PARSE = index;
 	this.addCode(0, index++, function parse() {
@@ -648,17 +648,20 @@ const ForthVM = class {
 	    this.state = 1;
 	}, ':')
 	this.addCode(0, index++, function exit() {
-	    this.rpop();
+	    this.rpop(false, 'jump');
 	})
 	this.addCode(-1, index++, function semicolon() {
+	    if(this.unresolvedControlFlow()) {
+		this.abort('Control flow word is unresolved');
+	    }
 	    this.writeHere(this.findWord('EXIT').cfa);
 	    this.clearHidden();
 	    this.state = 0;
 	}, ';')
 	this.addCode(0, index++, function literal() {
-	    const nextAddr = this.rpop();
+	    const nextAddr = this.rpop(false, 'jump');
 	    this.stack.push(this.memory.getUint32(nextAddr));
-	    this.rpush(nextAddr + this.cellSize);
+	    this.rpush(nextAddr + this.cellSize, 'jump');
 	})
 	this.addCode(0, index++, function dotS() {
 	    this.stack.print();
@@ -672,7 +675,7 @@ const ForthVM = class {
 	    this.stack.push(this.memory.getUint32(this.stack.pop()));
 	}, '@')
 	this.addCode(0, index++, function dovar() {
-	    this.stack.push(this.rpop());
+	    this.stack.push(this.rpop(false, 'jump'));
 	})
 	this.addCode(0, index++, function variable() {
 	    this.clearHidden();
@@ -714,6 +717,77 @@ const ForthVM = class {
 	})
 	this.addCode(0, index++, function j() {
 	    this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 3));
+	})
+	this.addCode(0, index++, function abort_quote() {
+	    this.stack.push(34);
+	    this.callCode(PARSE);
+	    const reason = this.readStringFromStack();
+	    this.abort(reason);
+	}, 'abort"')
+	this.addCode(0, index++, function drop() {
+	    this.stack.pop();
+	})
+	this.addCode(0, index++, function zerobranch() {
+	    let brVal = this.stack.pop();
+	    let returnAddr = this.rpop(false, 'jump');
+	    let branchAddr = this.memory.getUint32(returnAddr);
+	    
+	    if(brVal === 0) {
+		this.rpush(branchAddr, 'jump');
+	    } else {
+		this.rpush(returnAddr + this.cellSize, 'jump');
+	    }
+	}, '0branch')
+	this.addCode(0, index++, function run_do() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpush(this.stack.pop(), 'loop-sys-index');
+	    this.rpush(this.stack.pop(), 'loop-sys-limit');
+	    this.rpush(a, 'jump');
+	}, '(do)')
+	this.addCode(-1, index++, function _do() {
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('(DO)').cfa);
+		this.stack.push(this.dp, 'do-sys');
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'DO\' in interpret mode');
+	    }
+	}, 'do')
+	this.addCode(0, index++, function runLoop() {
+	    let nextAddr = this.rpop(false, 'jump');
+	    let limit = this.rpop(false, 'loop-sys-limit');
+	    let index = this.rpop(false, 'loop-sys-index') + 1;
+	    if(limit === index) {
+		this.pushTrue();
+	    } else {
+		this.rpush(index, 'loop-sys-index');
+		this.rpush(limit, 'loop-sys-limit');
+		this.pushFalse();
+	    }
+	    this.rpush(nextAddr, 'jump');
+	}, '(loop)')
+	this.addCode(-1, index++, function loop() {
+	    if(this.state === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('(LOOP)').cfa);
+		    this.writeHere(this.findWord('0BRANCH').cfa);
+		    let leaveStack = [];
+		    while(this.stack.peekControl() === 'leave-sys') {
+			const leaveSys = this.stack.pop(false, 'leave-sys');
+			leaveStack.push(leaveSys);
+		    }
+		    const doSys = this.stack.pop(false, 'do-sys');
+		    this.writeHere(doSys);
+		    while(leaveStack.length !== 0) {
+			this.memory.setUint32(leaveStack.pop(), this.dp);
+		    }
+		    this.controlFlowUnresolved++;
+		} else {
+		    this.abort('Cannot use LOOP without matching DO');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'LOOP\' in interpret mode');
+	    }	    
 	})
     }
 
