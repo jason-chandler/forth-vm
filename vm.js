@@ -40,11 +40,18 @@ class Stack {
 	}
     }
 
-    pop(signed, label) {
+    pop(signed, label, skipLeave) {
+	let leaveStack = [];
 	if(this.empty()) {
 	    this.vm.systemOut.log("STACK UNDERFLOW");
 	    throw("STACK UNDERFLOW: ");
 	} else {
+	    if(skipLeave) {
+		for(var i = this.depth() - 1; i >= 0 && this.peekControl() === 'leave-sys'; i--) {
+		    leaveStack.push(this.pop(false, 'leave-sys'));
+		}
+	    }
+
 	    let ctrl = this.control_indices.pop();
 	    if(ctrl.label === label)
 	    {
@@ -55,28 +62,13 @@ class Stack {
 		} else {
 		    val = this.memory.getUint32(this.sp);
 		}
+		while(skipLeave && leaveStack.length !== 0) {
+		    this.push(leaveStack.pop(), 'leave-sys');
+		}
 		return val;
 	    } else {
 		throw('Control flow mismatch, ' + ' ' + ctrl.label + ' was found while seeking ' + label);
 	    }
-	}
-    }
-
-    popControlSkipLeave(label) {
-	let leaveStack = [];
-	for(var i = this.depth() - this.cellSize; i >= 0 && this.peekControl() === 'leave-sys'; i -= this.cellSize) {
-	    leaveStack.push(this.pop(false, 'leave-sys'));
-	}
-	let ctrl = this.control_indices.pop();
-	if(ctrl.index === (this.sp + this.cellSize) && ctrl.label === label)
-	{
-	    let val = this.pop();
-	    while(leaveStack.length !== 0) {
-		this.push(leaveStack.pop(), 'leave-sys');
-	    }
-	    return val;
-	} else {
-	    throw('Control flow mismatch, ' + ctrl.index + ' ' + ctrl.label + ' was found while seeking ' + (this.sp + this.cellSize) + ' ' + label);
 	}
     }
 
@@ -90,17 +82,27 @@ class Stack {
     }
 
     pick(index) {
-	if(index < (this.depth() - this.cellSize)) {
-	    return this.memory.getUint32(this.s0 - this.cellSize - index);
+	if(index < (this.depth() - 1)) {
+	    return this.memory.getUint32(this.s0 - (this.cellSize * (index + 1)));
 	} else {
-	    throw('CONTROL STACK UNDERFLOW');
+	    throw('STACK UNDERFLOW');
 	}
+    }
+
+    loopDepth() {
+	let depth = 0;
+	for(let ctrl of this.control_indices) {
+	    if(ctrl.label === 'loop-sys-index') {
+		depth++;
+	    }
+	}
+	return depth;
     }
 
     pickControl(index, label) {
 	if(index < this.control_indices.length) {
 	    if(label === this.control_indices[index].label) {
-		return this.memory.getUint32(this.s0 - this.cellSize - index);
+		return this.memory.getUint32(this.s0 - (this.cellSize * (index + 1)));
 	    } else {
 		throw('Control flow mismatch, ' + index + ' ' + this.control_indices[index].label + ' was found while seeking ' + index + ' ' + label);
 	    }
@@ -746,11 +748,47 @@ const ForthVM = class {
 	    this.stack.push(a % b);
 	    this.stack.push(Math.floor(a / b));
 	}, '/mod')
+	this.addCode(0, index++, function less() {
+	    const b = this.stack.pop();
+	    const a = this.stack.pop();
+	    if(a < b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '<')
+	this.addCode(0, index++, function greater() {
+	    const b = this.stack.pop();
+	    const a = this.stack.pop();
+	    if(a > b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '>')
+	this.addCode(0, index++, function lesseq() {
+	    const b = this.stack.pop();
+	    const a = this.stack.pop();
+	    if(a <= b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '<=')
+	this.addCode(0, index++, function greateq() {
+	    const b = this.stack.pop();
+	    const a = this.stack.pop();
+	    if(a >= b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '>=')
 	this.addCode(0, index++, function i() {
-	    this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 1));
+	    this.stack.push(this.rstack.pick(2 * Math.max(this.rstack.loopDepth() - 1, 0)));
 	})
 	this.addCode(0, index++, function j() {
-	    this.stack.push(this.rstack.pick(this.rstack.depth() - 1 - 3));
+	    this.stack.push(this.rstack.pick(0));
 	})
 	this.addCode(0, index++, function abort_quote() {
 	    this.stack.push(34);
@@ -762,9 +800,9 @@ const ForthVM = class {
 	    this.stack.pop();
 	})
 	this.addCode(0, index++, function zerobranch() {
-	    let brVal = this.stack.pop();
-	    let returnAddr = this.rpop(false, 'jump');
-	    let branchAddr = this.memory.getUint32(returnAddr);
+	    const brVal = this.stack.pop();
+	    const returnAddr = this.rpop(false, 'jump');
+	    const branchAddr = this.memory.getUint32(returnAddr);
 	    
 	    if(brVal === 0) {
 		this.rpush(branchAddr, 'jump');
@@ -772,6 +810,11 @@ const ForthVM = class {
 		this.rpush(returnAddr + this.cellSize, 'jump');
 	    }
 	}, '0branch')
+	this.addCode(0, index++, function branch() {
+	    const returnAddr = this.rpop(false, 'jump');
+	    const branchAddr = this.memory.getUint32(returnAddr);
+	    this.rpush(branchAddr, 'jump');
+	})
 	this.addCode(0, index++, function run_do() {
 	    const a = this.rpop(false, 'jump');
 	    this.rpush(this.stack.pop(), 'loop-sys-index');
@@ -789,8 +832,8 @@ const ForthVM = class {
 	}, 'do')
 	this.addCode(0, index++, function runLoop() {
 	    let nextAddr = this.rpop(false, 'jump');
-	    let limit = this.rpop(false, 'loop-sys-limit');
-	    let index = this.rpop(false, 'loop-sys-index') + 1;
+	    let limit = this.rpop(true, 'loop-sys-limit');
+	    let index = this.rpop(true, 'loop-sys-index') + 1;
 	    if(limit === index) {
 		this.pushTrue();
 	    } else {
@@ -800,10 +843,25 @@ const ForthVM = class {
 	    }
 	    this.rpush(nextAddr, 'jump');
 	}, '(loop)')
-	this.addCode(-1, index++, function loop() {
+	this.addCode(0, index++, function runPlusLoop() {
+	    let nextAddr = this.rpop(false, 'jump');
+	    let limit = this.rpop(true, 'loop-sys-limit');
+	    let index = this.rpop(true, 'loop-sys-index') + this.pop(true);
+	    if(limit === index) {
+		this.pushTrue();
+	    } else {
+		this.rpush(index, 'loop-sys-index');
+		this.rpush(limit, 'loop-sys-limit');
+		this.pushFalse();
+	    }
+	    this.rpush(nextAddr, 'jump');
+	}, '(+loop)')
+	let plus;
+	const loop = function () {
 	    if(this.state === 1) {
 		if(this.unresolvedControlFlow()) {
-		    this.writeHere(this.findWord('(LOOP)').cfa);
+		    const loopWord = plus ? '(+LOOP)' : '(LOOP)';
+		    this.writeHere(this.findWord(loopWord).cfa);
 		    this.writeHere(this.findWord('0BRANCH').cfa);
 		    let leaveStack = [];
 		    while(this.stack.peekControl() === 'leave-sys') {
@@ -822,7 +880,15 @@ const ForthVM = class {
 	    } else {
 		this.abort('Cannot use control flow construct \'LOOP\' in interpret mode');
 	    }
-	})
+	}.bind(this, this);
+	this.addCode(-1, index++, function loop1 () {
+	    plus = false;
+	    loop();
+	}, 'loop');
+	this.addCode(-1, index++, function loop2 () {
+	    plus = true;
+	    loop();
+	}, '+loop');
 	this.addCode(0, index++, function toIn() {
 	    this.push(this.toIn);
 	}, '>in');
@@ -865,6 +931,106 @@ const ForthVM = class {
 	    this.callCode(PARSE);
 	    const name = this.readStringFromStack();
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	})
+	this.addCode(-1, index++, function begin() {
+	    if(this.state === 1) {
+		this.stack.push(this.dp, 'dest');
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'BEGIN\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function repeat() {
+	    if(this.state === 1) {
+		this.writeHere(Word.getCFA(this, this.debugTable['BRANCH']));
+		this.writeHere(this.pop(false, 'dest'));
+		this.memory.setUint32(this.pop(false, 'orig'), this.dp);
+		this.controlFlowUnresolved += 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'REPEAT\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function until() {
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.writeHere(this.pop(false, 'dest'));
+		this.controlFlowUnresolved += 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'UNTIL\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function _while() {
+	    if(this.state === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('0BRANCH').cfa);
+		    const dest = this.pop(false, 'dest');
+		    this.push(this.dp, 'orig');
+		    this.push(dest, 'dest');
+		    this.writeHere(0);
+		} else {
+		    this.abort('Cannot use while without matching begin');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'WHILE\' in interpret mode');
+	    }
+	}, 'while')
+	this.addCode(0, index++, function oneplus() {
+	    this.push(1 + this.pop(true));
+	}, '1+')
+	this.addCode(0, index++, function run_leave() {
+	    this.rpop(false, 'loop-sys-limit');
+	    this.rpop(false, 'loop-sys-index');
+	}, '(leave)')
+	this.addCode(-1, index++, function leave() {
+	    if(this.state === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('(LEAVE').cfa);
+		    this.writeHere(this.findWord('BRANCH').cfa);
+		    this.push(this.dp, 'leave-sys');
+		    this.writeHere(0);
+		} else {
+		    this.abort('Cannot use leave outside of control flow construct');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'LEAVE\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function _if() {
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.push(this.dp, 'orig');
+		this.writeHere(0);
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'IF\' in interpret mode');
+	    }
+	}, 'if')
+	this.addCode(-1, index++, function _else() {
+	    if(this.state === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('BRANCH').cfa);		    
+		    let orig2 = this.dp;
+		    this.writeHere(0);
+		    this.memory.setUint32(this.stack.pop(false, 'orig', true), this.dp);
+		    this.push(orig2, 'orig');
+		} else {
+		    this.abort('Cannot use else without matching if');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'ELSE\' in interpret mode');
+	    }
+	}, 'else')
+	this.addCode(-1, index++, function then() {
+	    if(this.state === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.memory.setUint32(this.stack.pop(false, 'orig', true), this.dp);
+		    this.controlFlowUnresolved++;
+		} else {
+		    this.abort('Cannot use then without matching if');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'THEN\' in interpret mode');
+	    }
 	})
     }
 
