@@ -253,7 +253,7 @@ const ForthVM = class {
 	this.strBufPointer = this.strBufStart;
 	this.tib = '';
 	this.state = 0;
-	this.toIn = 0;
+	this.toIn = 1;
 	this.latest = 0;
 	this.debugTable = {};
 	this.codeTable = [];
@@ -428,56 +428,71 @@ const ForthVM = class {
     }
 
     isNumber(word) {
-	return new Number(word).valueOf !== NaN;
+	return !isNaN(word);
     }
 
     getNextWord() {
 	let word = '';
-	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.toIn])) {
-	    word += this.tib[this.toIn];
-	    this.toIn++;
+	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
+	    word += this.tib[this.getToIn()];
+	    this.toInInc();
 	}
 	return word;
     }
 
     processWord(word) {
-	let foundWord = this.findWord(word);
-	let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
-	if(isWord) {
-	    if(foundWord.immediate === -1 || this.state === 0) {
-		this.rpush(foundWord.cfa, 'jump');
-		do {
-		    this.ip = this.rpop(false, 'jump');
-		    this.doCol();
-		} while (this.rstack.depth() > 0);
+	try {
+	    let foundWord = this.findWord(word);
+	    let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
+	    if(isWord) {
+		if(foundWord.immediate === -1 || this.state === 0) {
+		    this.rpush(foundWord.cfa, 'jump');
+		    do {
+			this.ip = this.rpop(false, 'jump');
+			this.doCol();
+		    } while (this.rstack.depth() > 0);
+		} else {
+		    this.writeHere(foundWord.cfa);
+		}
+	    } else if(this.isNumber(word)) {
+		if(this.state === 0) {
+		    this.stack.push(word);
+		} else {
+		    this.writeHere(this.findWord('LITERAL').cfa);
+		    this.writeHere(word);
+		}
 	    } else {
-		this.writeHere(foundWord.cfa);
+		throw(word + ' ?');
 	    }
-	} else if(this.isNumber(word)) {
-	    if(this.state === 0) {
-		this.stack.push(word);
-	    } else {
-		this.writeHere(this.findWord('LITERAL').cfa);
-		this.writeHere(word);
-	    }
-	} else {
-	    throw(new Exception(word + ' ?'));
+	} catch (e) {
+	    this.clearStacks();
+	    throw(e);
 	}
     }
 
     interpret(line) {
-	this.tib = line;
-	let len;
-	if(line === null || line === undefined || line.length === undefined) {
-	    len = 0;
-	} else {
-	    len = line.length;
-	}
-	this.toIn = 0;
-	while(this.toIn < len) {
-	    let word = this.getNextWord();
-	    this.toIn++;
-	    this.processWord(word);
+	try {
+	    this.tib = line;
+	    let len;
+	    if(line === null || line === undefined || line.length === undefined) {
+		len = 0;
+	    } else {
+		len = line.length;
+	    }
+	    this.resetToIn();
+	    while(this.getToIn() < len) {
+		let word = this.getNextWord();
+		this.toInInc();
+		this.processWord(word);
+	    }
+	    const okVal = this.state === 1 ? 'compiled' : 'ok';
+	    if(this.systemOut !== console) {
+		this.systemOut.log(okVal);
+	    }
+	    return okVal;
+	} catch (e) {
+	    this.systemOut.log('Error: ' + e);
+	    this.systemOut.log(e.stack);
 	}
     }
 
@@ -504,7 +519,7 @@ const ForthVM = class {
 	this.stack.clear();
 	this.rstack.clear();
 	this.controlFlowUnresolved = 0;
-	this.toIn = 0;
+	this.resetToIn();
 	this.tib = '';
     }
 
@@ -521,7 +536,7 @@ const ForthVM = class {
 	if(!reason) {
 	    reason = 'Abort called at ' + this.ip;
 	}
-	if(this.state === -1) {
+	if(this.state === 1) {
 	    this.forgetWordBeingDefined();
 	}
 	this.clearStacks();
@@ -535,6 +550,25 @@ const ForthVM = class {
     pushFalse() {
 	this.stack.push(0);
     }
+
+    getToIn() {
+	return this.memory.getUint32(this.toIn);
+    }
+
+    resetToIn() {
+	this.memory.setUint32(this.toIn, 0);
+    }
+
+    toInInc() {
+	let toInVal = this.getToIn();
+	this.memory.setUint32(this.toIn, toInVal + 1);
+    }
+
+    toInDec() {
+	let toInVal = this.getToIn();
+	this.memory.setUint32(this.toIn, toInVal - 1);
+    }
+
 
     // DICTIONARY
 
@@ -625,11 +659,11 @@ const ForthVM = class {
 	this.addCode(0, index++, function parse() {
 	    let parseChar = String.fromCharCode(this.stack.pop());
 	    let str = '';
-	    while(this.toIn < this.tib.length && this.tib[this.toIn] !== parseChar) {
-		str += this.tib[this.toIn];
-		this.toIn++;
+	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
+		str += this.tib[this.getToIn()];
+		this.toInInc();
 	    }
-	    this.toIn++;
+	    this.toInInc();
 	    this.writeToStringBuffer(str);
 	})
 	const BL = index;
@@ -787,15 +821,58 @@ const ForthVM = class {
 		}
 	    } else {
 		this.abort('Cannot use control flow construct \'LOOP\' in interpret mode');
-	    }	    
+	    }
+	})
+	this.addCode(0, index++, function toIn() {
+	    this.push(this.toIn);
+	}, '>in');
+	this.addCode(0, index++, function do_does() {
+	    const createdAddr = this.rpop(false, 'jump');
+	    const cfa2 = createdAddr - (2 * this.cellSize);
+	    const code2 = this.memory.getUint32(cfa2);
+	    this.push(createdAddr);
+	    if(code2 !== 0) {
+		this.rpush(code2, 'jump');
+	    }
+	}, 'dodoes')
+	this.addCode(0, index++, function run_does() {
+	    let latestWord = Word.fromAddress(this, this.latest);
+	    const lastDefinitionCreated = latestWord.codeWord === Word.getCFA(this, this.debugTable['DODOES']);
+	    if(lastDefinitionCreated) {
+		const returnAddr = this.rpop(false, 'jump');
+		this.memory.setUint32(latestWord.cfa2, returnAddr);
+	    } else {
+		this.abort('Cannot use DOES without CREATE');
+	    }
+	}, '(does)')
+	this.addCode(-1, index++, function does() {
+	    if(this.state === 0) {
+		let latestWord = Word.fromAddress(this, this.latest);
+		const lastDefinitionCreated = latestWord.codeWord === Word.getCFA(this, this.debugTable['DODOES']);
+		if(lastDefinitionCreated) {
+		    this.memory.setUint32(latestWord.cfa2, this.dp);
+		    this.state = 1;
+		} else {
+		    this.abort('Cannot use DOES without CREATE');
+		}
+	    } else {
+		this.writeHere(Word.getCFA(this, this.debugTable['(DOES)']));
+	    }
+	}, 'does>')
+	this.addCode(0, index++, function create() {
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
 	})
     }
 
     getNextWord(endChar) {
 	let word = '';
-	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.toIn])) {
-	    word += this.tib[this.toIn];
-	    this.toIn++;
+	while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
+	    word += this.tib[this.getToIn()];
+	    this.toInInc();
 	}
 	return word;
     }
