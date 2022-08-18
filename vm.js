@@ -82,8 +82,8 @@ class Stack {
     }
 
     pick(index) {
-	if(index < (this.depth() - 1)) {
-	    return this.memory.getUint32(this.s0 - (this.cellSize * (index + 1)));
+	if(index < this.depth()) {
+	    return this.memory.getUint32(this.sp + (this.cellSize * (index + 1)));
 	} else {
 	    throw('STACK UNDERFLOW');
 	}
@@ -430,7 +430,7 @@ const ForthVM = class {
     }
 
     isNumber(word) {
-	return !isNaN(word);
+	return !isNaN(word) && word !== '';
     }
 
     getNextWord() {
@@ -657,6 +657,9 @@ const ForthVM = class {
 	    this.stack.push(a);
 	    this.stack.push(c);
 	})
+	this.addCode(0, index++, function over() {
+	    this.push(this.stack.pick(1));
+	})
 	const PARSE = index;
 	this.addCode(0, index++, function parse() {
 	    let parseChar = String.fromCharCode(this.stack.pop());
@@ -670,8 +673,25 @@ const ForthVM = class {
 	})
 	const BL = index;
 	this.addCode(0, index++, function bl() {
-	    this.stack.push(32);
+	    this.stack.push(32); // space
 	})
+	this.addCode(-1, index++, function lparen() {
+	    let parseChar = String.fromCharCode(41); // right paren
+	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
+		this.toInInc();
+	    }
+	    this.toInInc();
+	}, '(')
+	this.addCode(-1, index++, function dot_lparen() {
+	    let parseChar = String.fromCharCode(41); // right paren
+	    let str = '';
+	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
+		str += this.tib[this.getToIn()];
+		this.toInInc();
+	    }
+	    this.systemOut.log(str);
+	    this.toInInc();
+	}, '.(')
 	this.addCode(0, index++, function docol() {
 	    
 	})
@@ -932,6 +952,16 @@ const ForthVM = class {
 	    const name = this.readStringFromStack();
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
 	})
+	this.addCode(-1, index++, function again() {
+	    if(this.state === 1) {
+		this.writeHere(Word.getCFA(this, this.debugTable['BRANCH']));
+		this.writeHere(this.pop(false, 'dest'));
+		this.controlFlowUnresolved += 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'AGAIN\' in interpret mode');
+	    }
+
+	})
 	this.addCode(-1, index++, function begin() {
 	    if(this.state === 1) {
 		this.stack.push(this.dp, 'dest');
@@ -945,7 +975,7 @@ const ForthVM = class {
 		this.writeHere(Word.getCFA(this, this.debugTable['BRANCH']));
 		this.writeHere(this.pop(false, 'dest'));
 		this.memory.setUint32(this.pop(false, 'orig'), this.dp);
-		this.controlFlowUnresolved += 1;
+		this.controlFlowUnresolved += 2;
 	    } else {
 		this.abort('Cannot use control flow construct \'REPEAT\' in interpret mode');
 	    }
@@ -967,6 +997,7 @@ const ForthVM = class {
 		    this.push(this.dp, 'orig');
 		    this.push(dest, 'dest');
 		    this.writeHere(0);
+		    this.controlFlowUnresolved -= 1;
 		} else {
 		    this.abort('Cannot use while without matching begin');
 		}
@@ -977,6 +1008,9 @@ const ForthVM = class {
 	this.addCode(0, index++, function oneplus() {
 	    this.push(1 + this.pop(true));
 	}, '1+')
+	this.addCode(0, index++, function oneminus() {
+	    this.push(this.pop(true) - 1);
+	}, '1-')
 	this.addCode(0, index++, function run_leave() {
 	    this.rpop(false, 'loop-sys-limit');
 	    this.rpop(false, 'loop-sys-index');
@@ -1036,9 +1070,14 @@ const ForthVM = class {
 
     getNextWord(endChar) {
 	let word = '';
-	while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
-	    word += this.tib[this.getToIn()];
-	    this.toInInc();
+	while(word === '' && this.getToIn() < this.tib.length) {
+	    while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
+		word += this.tib[this.getToIn()];
+		this.toInInc();
+	    }
+	    if(word === '') {
+		this.toInInc();
+	    }
 	}
 	return word;
     }
