@@ -175,14 +175,13 @@ class Word {
 	let pfa = cfa + vm.cellSize;
 	let codeWord = vm.memory.getUint32(cfa);
 	let codeWord2 = vm.memory.getUint32(cfa2);
-	return {address: address, name: name, immediate: immediate, codeWord: codeWord, codeWord2: codeWord2, cfa: cfa, cfa2: cfa2, pfa: pfa};
+	return {address: address, name: name, immediate: immediate, immediateAddress: immediateAddress, codeWord: codeWord, codeWord2: codeWord2, cfa: cfa, cfa2: cfa2, pfa: pfa};
     }
 
     static getCFA(vm, linkAddress) {
 	let nameAddress = linkAddress + vm.cellSize;
 	return nameAddress + vm.align((1 + vm.memory.getByte(nameAddress))) + (vm.cellSize * 2);
     }
-    
 }
 
 class Memory {
@@ -256,6 +255,8 @@ const ForthVM = class {
 	this.tib = '';
 	this.state = 0;
 	this.toIn = 1;
+	this.baseAddr = this.memory.memorySize - (1208 * this.cellSize);
+	this.memory.setUint32(this.baseAddr, 10);
 	this.latest = 0;
 	this.debugTable = {};
 	this.codeTable = [];
@@ -304,11 +305,24 @@ const ForthVM = class {
 	return this.rstack.pop(signed, label);
     }
 
+    rpushNested(val, label) {
+	if(val) {
+	    this.rpush(val, label);
+	}
+    }
+    
+    rpopNested(signed, label) {
+	if(this.rstack.depth() > 1) {
+	    this.rpop(signed, label);
+	}
+    }
+
     align(addr) {
 	if(!addr) {
 	    addr = this.stack.pop();
 	}
-	return addr + (this.cellSize - (addr % this.cellSize));
+	const mod = addr % this.cellSize;
+	return mod === 0 ? addr : (addr + (this.cellSize - mod));
     }
 
     alignDp() {
@@ -429,8 +443,12 @@ const ForthVM = class {
 	return character !== ' ' && character !== '\n';
     }
 
+    getBase() {
+	return this.memory.getUint32(this.baseAddr);
+    }
+
     isNumber(word) {
-	return !isNaN(word) && word !== '';
+	return !isNaN(parseInt(word, this.getBase())) && word !== '';
     }
 
     getNextWord() {
@@ -458,10 +476,10 @@ const ForthVM = class {
 		}
 	    } else if(this.isNumber(word)) {
 		if(this.state === 0) {
-		    this.stack.push(word);
+		    this.stack.push(parseInt(word, this.getBase()));
 		} else {
 		    this.writeHere(this.findWord('LITERAL').cfa);
-		    this.writeHere(word);
+		    this.writeHere(parseInt(word, this.getBase()));
 		}
 	    } else {
 		throw(word + ' ?');
@@ -603,11 +621,18 @@ const ForthVM = class {
     }
 
     getNameAndLinkFromAddr(addr) {
-	let link = this.memory.getUint32(addr);
+	const link = this.memory.getUint32(addr);
 	this.push(addr + this.cellSize);
-	let name = this.readCountedString();
+	const name = this.readCountedString();
 	return [name,link];
     }
+
+    getXtAndLinkFromAddr(addr) {
+	const link = this.memory.getUint32(addr);
+	const xt = Word.getCFA(this, addr);
+	return [xt,link];
+    }
+
 
     find(name) {
 	if(this.latest === 0) {
@@ -620,6 +645,24 @@ const ForthVM = class {
 	    let tempLink = check[1];
 	    if(String(tempName).toUpperCase() === String(name).toUpperCase()) {
 		return tempAddr;
+	    } else {
+		tempAddr = tempLink;
+	    }
+	}
+	return tempAddr;
+    }
+
+    findByXt(xt) {
+	if(this.latest === 0) {
+	    throw("Forth VM has no definitions!");
+	}
+	let tempAddr = this.latest;
+	while(tempAddr !== 0) {
+	    let check = this.getXtAndLinkFromAddr(tempAddr);
+	    let tempXt = check[0];
+	    let tempLink = check[1];
+	    if(tempXt === xt) {
+		return tempXt;
 	    } else {
 		tempAddr = tempLink;
 	    }
@@ -740,9 +783,31 @@ const ForthVM = class {
 	this.addCode(0, index++, function fetch() {
 	    this.stack.push(this.memory.getUint32(this.stack.pop()));
 	}, '@')
+	this.addCode(0, index++, function cfetch() {
+	    this.stack.push(this.memory.getByte(this.stack.pop()));
+	}, 'c@')
+	this.addCode(0, index++, function ccomma() {
+	    this.writeCHere(this.pop());
+	}, 'c,')
+
 	this.addCode(0, index++, function rfetch() {
 	    this.push(this.rstack.pick(1));
 	}, 'R@')
+	this.addCode(0, index++, function here() {
+	    this.push(this.dp);
+	})
+	this.addCode(0, index++, function allot() {
+	    this.offsetDp(this.pop());
+	})
+	this.addCode(0, index++, function base() {
+	    this.push(this.baseAddr);
+	})
+	this.addCode(0, index++, function decimal() {
+	    this.memory.setUint32(this.baseAddr, 10);
+	})
+	this.addCode(0, index++, function hex() {
+	    this.memory.setUint32(this.baseAddr, 16);
+	})
 	this.addCode(0, index++, function dovar() {
 	    this.stack.push(this.rpop(false, 'jump'));
 	})
@@ -761,8 +826,85 @@ const ForthVM = class {
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
 	    this.offsetDp(this.cellSize);
 	})
+	this.addCode(0, index++, function tick() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    const found = this.findWord(name);
+	    if(found === 0) {
+		this.abort(name + " ?");
+	    } else {
+		this.push(found.cfa);
+	    }
+	}, '\'')
+	this.addCode(-1, index++, function bracket_tick() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    const found = this.findWord(name);
+	    if(found === 0) {
+		this.abort(name + " ?");
+	    } else {
+		this.writeHere(this.findWord('LITERAL').cfa);
+		this.writeHere(found.cfa);
+	    }
+	}, '[\']')
+	this.addCode(-1, index++, function lbracket() {
+	    this.state = 0;
+	}, '[')
+	this.addCode(-1, index++, function rbracket() {
+	    this.state = 1;
+	}, ']')
+	this.addCode(-1, index++, function bracket_char() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.writeHere(this.findWord('LITERAL').cfa);
+	    this.writeHere(name.charCodeAt(0));
+	}, '[char]')
+	this.addCode(0, index++, function _char() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.push(name.charCodeAt(0));
+	}, 'char')
+	this.addCode(0, index++, function char_plus() {
+	    this.push((this.pop() + 1));
+	}, 'char+')
+	this.addCode(0, index++, function chars() {
+	    this.push(this.pop());
+	})
+	this.addCode(-1, index++, function bracket_compile() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    const found = this.findWord(name);
+	    if(found === 0) {
+		this.abort(name + " ?");
+	    } else {
+		this.writeHere(found.cfa);
+	    }
+	}, '[compile]')
+	this.addCode(0, index++, function immediate() {
+	    const latestWord = Word.fromAddress(this, this.latest);
+	    this.memory.setInt32(latestWord.immediateAddress, -1);
+	})
+	this.addCode(0, index++, function execute() {
+	    const a = this.rpopNested(false, 'jump');
+	    this.rpush(this.pop(), 'jump');
+	    this.rpushNested(a, 'jump');
+	})
+	this.addCode(0, index++, function compile_comma() {
+	    const xt = this.stack.pop();
+	    const found = this.findByXt(xt);
+	    if(found === 0) {
+		this.abort("Invalid execution token: " + xt);
+	    } else {
+		this.writeHere(xt);
+	    }
+	}, 'compile,')
 	this.addCode(0, index++, function d() {
-	    this.systemOut.log(this.stack.pop(true));
+	    this.systemOut.log(this.stack.pop(true).toString(this.getBase()));
 	}, '.')
 	this.addCode(0, index++, function plus() {
 	    this.stack.push(this.stack.pop() + this.stack.pop());
@@ -824,6 +966,15 @@ const ForthVM = class {
 		this.pushFalse();
 	    }
 	}, '>=')
+	this.addCode(0, index++, function abs() {
+	    this.push(Math.abs(this.pop(true)));
+	})
+	this.addCode(0, index++, function align() {
+	    this.alignDp();
+	})
+	this.addCode(0, index++, function aligned() {
+	    this.push(this.align());
+	})
 	this.addCode(0, index++, function i() {
 	    this.stack.push(this.rstack.pick(2));
 	})
@@ -1030,6 +1181,22 @@ const ForthVM = class {
 	    this.callCode(PARSE);
 	    const name = this.readStringFromStack();
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	})
+	this.addCode(0, index++, function buffer() {
+	    this.alignDp();
+	    const size = this.pop();
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	    this.offsetDp(size);
+	})
+	this.addCode(0, index++, function cellplus() {
+	    this.push(this.pop(false) + this.cellSize);
+	}, 'cell+')
+	this.addCode(0, index++, function cells() {
+	    this.push(this.pop(false) * this.cellSize);
 	})
 	this.addCode(-1, index++, function again() {
 	    if(this.state === 1) {
