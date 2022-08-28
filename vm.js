@@ -522,6 +522,7 @@ const ForthVM = class {
 	this.alignDp();
 	this.writeHere(word.immediate);
 	this.writeHere(word.codeWord2);
+	const cfa = this.dp;
 	this.writeHere(word.codeWord);
 	if(word.parameterField !== undefined) {
 	    for(let addr of word.parameterField) {
@@ -533,6 +534,7 @@ const ForthVM = class {
 	} else {
 	    this.hiddenWord = word;
 	}
+	return cfa;
     }
 
     clearStacks() {
@@ -603,7 +605,8 @@ const ForthVM = class {
     addWord(name, immediate, codeWord, codeWord2, hidden) {
 	this.alignDp();
 	let word = new Word(this, this.dp, name.toUpperCase(), immediate, codeWord, codeWord2, []);
-	this.writeWord(word, hidden);
+	const cfa = this.writeWord(word, hidden);
+	return cfa;
     }
 
     addCode(immediate, index, fn, fnName) {
@@ -662,7 +665,7 @@ const ForthVM = class {
 	    let tempXt = check[0];
 	    let tempLink = check[1];
 	    if(tempXt === xt) {
-		return tempXt;
+		return tempAddr;
 	    } else {
 		tempAddr = tempLink;
 	    }
@@ -776,8 +779,8 @@ const ForthVM = class {
 	    this.rpush(a, 'jump');
 	}, 'R>');
 	this.addCode(0, index++, function store() {
-	    const addr = this.stack.pop();
-	    const val = this.stack.pop();
+	    const addr = this.pop();
+	    const val = this.pop();
 	    this.memory.setUint32(addr, val)
 	}, '!')
 	this.addCode(0, index++, function fetch() {
@@ -789,7 +792,11 @@ const ForthVM = class {
 	this.addCode(0, index++, function ccomma() {
 	    this.writeCHere(this.pop());
 	}, 'c,')
-
+	this.addCode(0, index++, function cstore() {
+	    const addr = this.pop();
+	    const val = this.pop()
+	    this.stack.push(this.memory.setByte(addr, val));
+	}, 'c!')
 	this.addCode(0, index++, function rfetch() {
 	    this.push(this.rstack.pick(1));
 	}, 'R@')
@@ -811,6 +818,9 @@ const ForthVM = class {
 	this.addCode(0, index++, function dovar() {
 	    this.stack.push(this.rpop(false, 'jump'));
 	})
+	this.addCode(0, index++, function docon() {
+	    this.stack.push(this.memory.getUint32(this.rpop(false, 'jump')));
+	})
 	this.addCode(0, index++, function equal() {
 	    if(this.pop() === this.pop()) {
 		this.pushTrue();
@@ -825,6 +835,15 @@ const ForthVM = class {
 	    const name = this.readStringFromStack();
 	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
 	    this.offsetDp(this.cellSize);
+	})
+	this.addCode(0, index++, function constant() {
+	    const constant = this.pop();
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const name = this.readStringFromStack();
+	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCON']), 0)
+	    this.writeHere(constant);
 	})
 	this.addCode(0, index++, function tick() {
 	    this.callCode(BL);
@@ -1311,8 +1330,56 @@ const ForthVM = class {
 		this.abort('Cannot use control flow construct \'THEN\' in interpret mode');
 	    }
 	})
-    }
+	this.addCode(0, index++, function count() {
+	    const loc = this.stack.pop();
+	    const len = this.memory.getByte(loc);
+	    this.push(loc + 1);
+	    this.push(len);
+	})
+	this.addCode(0, index++, function cr() {
+	    this.push('\n'.charCodeAt(0));
+	})
+	this.addCode(0, index++, function colon_noname() {
+	    this.clearHidden();
+	    const noname_cfa = this.addWord('', 0, Word.getCFA(this, this.debugTable['DOCOL']), 0);
+	    this.state = 1;
+	    this.push(noname_cfa);
+	}, ':noname')
+	this.addCode(-1, index++, function recurse() {
+	    if(this.hiddenWord) {
+		this.writeHere(this.hiddenWord.cfa);
+	    } else {
+		this.writeHere(this.getXtAndLinkFromAddr(this.latest)[0]);
+	    }
+	})
+	this.addCode(0, index++,  function dump() {
+	    const addr = this.pop();
+	    const limit = this.pop();
+	    let str = '';
+	    for(let i = 0; i < limit; i++) {
+		str += this.memory.getByte(addr + i);
+		str += ' ';
+	    }
+	    this.systemOut.log(str);
+	})
+	this.addCode(0, index++,  function defdump() {
+	    const cfa = this.pop();
+	    const limit = this.pop();
+	    let str = '';
+	    for(let i = 0; i < limit; i+= this.cellSize) {
+		const defcfa = this.memory.getUint32(cfa + i);
+		const addr = this.findByXt(defcfa);
+		if(addr !== 0)  {
+		    str += Word.fromAddress(this, addr).name;
+		} else {
+		    str += defcfa;
+		}
+		str += ' ';
+	    }
+	    this.systemOut.log(str);
+	})
 
+    }
     getNextWord(endChar) {
 	let word = '';
 	while(word === '' && this.getToIn() < this.tib.length) {
