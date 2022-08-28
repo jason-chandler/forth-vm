@@ -722,6 +722,16 @@ const ForthVM = class {
 	this.addCode(0, index++, function dotS() {
 	    this.stack.print();
 	}, '.s')
+	this.addCode(0, index++, function toR() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpush(this.pop(false));
+	    this.rpush(a, 'jump');
+	}, '>R');
+	this.addCode(0, index++, function Rfrom() {
+	    const a = this.rpop(false, 'jump');
+	    this.push(this.rpop(false));
+	    this.rpush(a, 'jump');
+	}, 'R>');
 	this.addCode(0, index++, function store() {
 	    const addr = this.stack.pop();
 	    const val = this.stack.pop();
@@ -730,9 +740,19 @@ const ForthVM = class {
 	this.addCode(0, index++, function fetch() {
 	    this.stack.push(this.memory.getUint32(this.stack.pop()));
 	}, '@')
+	this.addCode(0, index++, function rfetch() {
+	    this.push(this.rstack.pick(1));
+	}, 'R@')
 	this.addCode(0, index++, function dovar() {
 	    this.stack.push(this.rpop(false, 'jump'));
 	})
+	this.addCode(0, index++, function equal() {
+	    if(this.pop() === this.pop()) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '=')
 	this.addCode(0, index++, function variable() {
 	    this.clearHidden();
 	    this.callCode(BL);
@@ -742,7 +762,7 @@ const ForthVM = class {
 	    this.offsetDp(this.cellSize);
 	})
 	this.addCode(0, index++, function d() {
-	    this.systemOut.log(this.stack.pop());
+	    this.systemOut.log(this.stack.pop(true));
 	}, '.')
 	this.addCode(0, index++, function plus() {
 	    this.stack.push(this.stack.pop() + this.stack.pop());
@@ -805,10 +825,13 @@ const ForthVM = class {
 	    }
 	}, '>=')
 	this.addCode(0, index++, function i() {
-	    this.stack.push(this.rstack.pick(2 * Math.max(this.rstack.loopDepth() - 1, 0)));
+	    this.stack.push(this.rstack.pick(2));
 	})
 	this.addCode(0, index++, function j() {
-	    this.stack.push(this.rstack.pick(0));
+	    this.stack.push(this.rstack.pick(4));
+	})
+	this.addCode(0, index++, function pick() {
+	    this.push(this.stack.pick(this.pop(false)));
 	})
 	this.addCode(0, index++, function abort_quote() {
 	    this.stack.push(34);
@@ -817,7 +840,7 @@ const ForthVM = class {
 	    this.abort(reason);
 	}, 'abort"')
 	this.addCode(0, index++, function drop() {
-	    this.stack.pop();
+	    this.pop();
 	})
 	this.addCode(0, index++, function zerobranch() {
 	    const brVal = this.stack.pop();
@@ -850,6 +873,62 @@ const ForthVM = class {
 		this.abort('Cannot use control flow construct \'DO\' in interpret mode');
 	    }
 	}, 'do')
+	this.addCode(-1, index++, function _case() {
+	    if(this.state === 1) {
+		// TODO: look up a better implementation of this
+		this.writeHere(this.findWord('LITERAL').cfa);
+		this.push(this.dp, 'case-sys');
+		this.writeHere(0);
+		this.writeHere(this.findWord('DROP').cfa);
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'CASE\' in interpret mode');
+	    }
+	}, 'case')
+	this.addCode(-1, index++, function _of() {
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('LITERAL').cfa);
+		this.writeHere(1);
+		this.writeHere(this.findWord('PICK').cfa);
+		this.writeHere(this.findWord('=').cfa);
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.push(this.dp, 'of-sys');
+		this.writeHere(0);
+		this.writeHere(this.findWord('DROP').cfa);
+		this.controlFlowUnresolved -= 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'OF\' in interpret mode');
+			 }
+	}, 'of')
+	this.addCode(-1, index++, function endof() {
+	    if(this.state === 1) {
+		const endOf = this.dp;
+		const _of = this.pop(false, 'of-sys');
+		const _case = this.pop(false, 'case-sys');
+		// make sure the previous endof jumps to before the branch
+		// so it skips to the end
+		this.memory.setUint32(_case, endOf);
+		this.writeHere(this.findWord('BRANCH').cfa);
+		this.push(this.dp, 'case-sys');
+		this.writeHere(0);
+		// make sure the previous OF jumps after the branch to check
+		// if the next case is true
+		this.memory.setUint32(_of, this.dp);
+		this.controlFlowUnresolved += 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'ENDOF\' in interpret mode');
+			 }
+	}, 'endof')
+	this.addCode(-1, index++, function endcase() {
+	    if(this.state === 1) {
+		const _case = this.pop(false, 'case-sys');
+		this.writeHere(this.findWord('DROP').cfa);
+		this.memory.setUint32(_case, this.dp);
+		this.controlFlowUnresolved += 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'ENDCASE\' in interpret mode');
+			 }
+	}, 'endcase')
 	this.addCode(0, index++, function runLoop() {
 	    let nextAddr = this.rpop(false, 'jump');
 	    let limit = this.rpop(true, 'loop-sys-limit');
@@ -960,7 +1039,6 @@ const ForthVM = class {
 	    } else {
 		this.abort('Cannot use control flow construct \'AGAIN\' in interpret mode');
 	    }
-
 	})
 	this.addCode(-1, index++, function begin() {
 	    if(this.state === 1) {
