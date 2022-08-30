@@ -786,6 +786,13 @@ const ForthVM = class {
 	this.addCode(0, index++, function fetch() {
 	    this.stack.push(this.memory.getUint32(this.stack.pop()));
 	}, '@')
+	const COMMA = index;
+	this.addCode(0, index++, function comma() {
+	    if(this.dp % this.cellSize !== 0) {
+		this.abort('Must be aligned to store to cell.');
+	    }
+	    this.writeHere(this.pop(false));
+	}, ',')
 	this.addCode(0, index++, function cfetch() {
 	    this.stack.push(this.memory.getByte(this.stack.pop()));
 	}, 'c@')
@@ -1003,6 +1010,9 @@ const ForthVM = class {
 	this.addCode(0, index++, function pick() {
 	    this.push(this.stack.pick(this.pop(false)));
 	})
+	this.addCode(0, index++, function abort() {
+	    this.abort();
+	})
 	this.addCode(0, index++, function abort_quote() {
 	    this.stack.push(34);
 	    this.callCode(PARSE);
@@ -1180,6 +1190,7 @@ const ForthVM = class {
 		this.abort('Cannot use DOES without CREATE');
 	    }
 	}, '(does)')
+	const DOES = index;
 	this.addCode(-1, index++, function does() {
 	    if(this.state === 0) {
 		let latestWord = Word.fromAddress(this, this.latest);
@@ -1194,6 +1205,7 @@ const ForthVM = class {
 		this.writeHere(Word.getCFA(this, this.debugTable['(DOES)']));
 	    }
 	}, 'does>')
+	const CREATE = index;
 	this.addCode(0, index++, function create() {
 	    this.clearHidden();
 	    this.callCode(BL);
@@ -1378,6 +1390,41 @@ const ForthVM = class {
 	    }
 	    this.systemOut.log(str);
 	})
+	this.addCode(0, index++, function defer() {
+	    this.callCode(CREATE);
+	    this.writeHere(this.findWord('ABORT').cfa);
+	    this.callCode(DOES);
+	    this.writeHere(this.findWord('@').cfa);
+	    this.writeHere(this.findWord('EXECUTE').cfa);
+	    this.writeHere(this.findWord('EXIT').cfa);
+	    this.state = 0;
+	})
+	this.addCode(0, index++, function is() {
+	    const xt = this.pop();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const pfa = this.findWord(this.readStringFromStack()).pfa;
+	    this.memory.setUint32(pfa, xt);
+	})
+	this.addCode(0, index++, function defer_store() {
+	    const deferred = this.pop();
+	    const xt = this.pop();
+	    const found = this.findByXt(deferred);
+	    if(found === 0) {
+		this.abort("Invalid execution token: " + xt);
+	    } else {
+		this.memory.setUint32(deferred + this.cellSize, xt);
+	    }
+	}, 'defer!')
+	this.addCode(0, index++, function defer_fetch() {
+	    const deferred = this.pop();
+	    const found = this.findByXt(deferred);
+	    if(found === 0) {
+		this.abort("Invalid execution token: " + xt);
+	    } else {
+		this.push(this.memory.getUint32(deferred + this.cellSize));
+	    }
+	}, 'defer@')
 
     }
     getNextWord(endChar) {
