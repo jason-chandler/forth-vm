@@ -322,7 +322,7 @@ const ForthVM = class {
 	    addr = this.stack.pop();
 	}
 	const mod = addr % this.cellSize;
-	return mod === 0 ? addr : (addr + (this.cellSize - mod));
+	return addr + (this.cellSize - mod);
     }
 
     alignDp() {
@@ -1014,11 +1014,31 @@ const ForthVM = class {
 	    this.abort();
 	})
 	this.addCode(0, index++, function abort_quote() {
-	    this.stack.push(34);
+	    this.push(34);
 	    this.callCode(PARSE);
 	    const reason = this.readStringFromStack();
 	    this.abort(reason);
 	}, 'abort"')
+	this.addCode(0, index++, function read_cstring() {
+	    const a = this.rpop(false, 'jump');
+	    const len = this.memory.getByte(a);
+	    this.push(a + 1);
+	    this.push(len);
+	    this.rpush(this.align(a + len), 'jump');
+	}, '(s")')
+	this.addCode(-1, index++, function s_quote() {
+	    this.stack.push(34);
+	    this.callCode(PARSE);
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('(S")').cfa);
+		const str = this.readStringFromStack();
+		this.writeCountedStringHere(str);
+		this.alignDp();
+	    }
+	}, 's"')
+	this.addCode(0, index++, function type() {
+	    this.systemOut.log(this.readStringFromStack());
+	})
 	this.addCode(0, index++, function drop() {
 	    this.pop();
 	})
