@@ -239,7 +239,8 @@ const ForthVM = class {
     strBufStart;
     strBufEnd;
     strBufPointer;
-    controlFlowUnresolved
+    controlFlowUnresolved;
+    environment;
     
     constructor() {
 	this.cellSize = 4;
@@ -263,6 +264,7 @@ const ForthVM = class {
 	this.systemOut = window.console;
 	this.controlFlowUnresolved = 0;
 	this.initCodeWords();
+	this.environment = [];
     }
 
     getIp() {
@@ -448,12 +450,35 @@ const ForthVM = class {
 	}
     }
 
+    loadFile(filePath) {
+	var result = null;
+	var xmlhttp = new XMLHttpRequest();
+	xmlhttp.open("GET", location.href + filePath, false);
+	xmlhttp.send(null);
+	if (xmlhttp.status==200) {
+	    result = xmlhttp.responseText;
+	}
+	return result;
+    }
+
+
     // OUTER INTERPRETER
     
     isNotSpace(character) {
 	return character !== ' ' && character !== '\n';
     }
 
+    filterWeirdSpacing(str) {
+	//let blankFn = function(word) { return word !== '' && word !== undefined && word !== null; };
+	return String(str)
+	    .trim()
+	    .replaceAll('\r', ' ')
+	    .replaceAll('\t', ' ')
+	    .replaceAll('\n\n', '\n')
+	    .replaceAll('\n', ' \n ');
+    }
+
+    
     getBase() {
 	return this.memory.getUint32(this.baseAddr);
     }
@@ -508,13 +533,14 @@ const ForthVM = class {
 	    if(line === null || line === undefined || line.length === undefined) {
 		len = 0;
 	    } else {
-		len = line.length;
+		len = this.tib.length;
 	    }
 	    this.resetToIn();
 	    while(this.getToIn() < len) {
 		let word = this.getNextWord();
 		this.toInInc();
 		this.processWord(word);
+		len = this.tib.length;
 	    }
 	    const okVal = this.state === 1 ? 'compiled' : 'ok';
 	    if(this.systemOut !== console) {
@@ -758,6 +784,13 @@ const ForthVM = class {
 	    }
 	    this.toInInc();
 	}, '(')
+	this.addCode(-1, index++, function backslash() {
+	    let parseChar = '\n';
+	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
+		this.toInInc();
+	    }
+	    this.toInInc();
+	}, '\\')
 	this.addCode(-1, index++, function dot_lparen() {
 	    let parseChar = String.fromCharCode(41); // right paren
 	    let str = '';
@@ -1461,6 +1494,22 @@ const ForthVM = class {
 	    counted = true;
 	    PARSEIMPL();
 	})
+	this.addCode(0, index++, function include() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const fileName = this.readStringFromStack();
+	    let file = this.filterWeirdSpacing(this.loadFile(fileName));
+	    const substrindex = this.tib.match('include ' + fileName).index + 'include '.length + fileName.length;
+	    this.tib = this.tib.substring(0, substrindex) + ' ' + file + ' ' + this.tib.substring(substrindex);
+	})
+	this.addCode(0, index++, function environmentq() {
+	    const query = this.readStringFromStack();
+	    if(this.environment.includes(query.toUpperCase())) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'environment?')
     }
     getNextWord(endChar) {
 	let word = '';
