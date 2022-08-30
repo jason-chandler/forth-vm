@@ -339,7 +339,7 @@ const ForthVM = class {
     }
 
     writeC(offset, val) {
-	let c = (typeof(val) !== 'number') ? val.charCodeAt() : c;
+	let c = (typeof(val) !== 'number') ? val.charCodeAt() : val;
 	this.memory.setByte(offset, c);
     }
 
@@ -403,7 +403,7 @@ const ForthVM = class {
 	return this.strBufEnd - this.strBufPointer - 1;
     }
 
-    writeToStringBuffer(str) {
+    writeToStringBuffer(str, counted) {
 	if((str.length + 1) > this.strBufSpace()) {
 	    if((str.length + 1) > (this.strBufEnd - this.strBufStart)) {
 		throw("String too large for buffer!");
@@ -411,13 +411,24 @@ const ForthVM = class {
 	    this.strBufPointer = this.strBufStart;
 	}
 	this.stack.push(this.strBufPointer);
-	this.stack.push(str.length);
-	this.writeString(this.strBufPointer, str);
-	this.strBufPointer += str.length + 1;
+
+	if(counted) {
+	    this.writeCountedString(this.strBufPointer, str);
+	    this.strBufPointer += str.length + 2;
+	} else {
+	    this.stack.push(str.length);
+	    this.writeString(this.strBufPointer, str);
+	    this.strBufPointer += str.length + 1;
+	}
 	if(this.strBufPointer >= this.strBufEnd) {
 	    this.strBufPointer = this.strBufStart;
 	}
     }
+
+    writeCountedToStringBuffer(str) {
+	this.writeToStringBuffer(str, true);
+    }
+
 
     clearHidden() {
 	if(this.hiddenWord) {
@@ -673,6 +684,11 @@ const ForthVM = class {
 	return tempAddr;
     }
 
+    findByXtOrAbort(xt) {
+	const addr = this.findByXt(xt);
+	return addr === 0 ? this.abort("Invalid execution token: " + xt) : addr;
+    }
+
     findWord(name) {
 	let addr = this.find(String(name).toUpperCase());
 	if (addr === 0) {
@@ -680,6 +696,11 @@ const ForthVM = class {
 	} else {
 	    return Word.fromAddress(this, addr);
 	}
+    }
+
+    findWordOrAbort(name) {
+	const word = this.findWord(name);
+	return word === 0 ? this.abort(name + " ?") : word;
     }
 
     initCodeWords() {
@@ -707,7 +728,8 @@ const ForthVM = class {
 	    this.push(this.stack.pick(1));
 	})
 	const PARSE = index;
-	this.addCode(0, index++, function parse() {
+	let counted;
+	const PARSEIMPL = function () {
 	    let parseChar = String.fromCharCode(this.stack.pop());
 	    let str = '';
 	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
@@ -715,7 +737,15 @@ const ForthVM = class {
 		this.toInInc();
 	    }
 	    this.toInInc();
-	    this.writeToStringBuffer(str);
+	    if(counted) {
+		this.writeCountedToStringBuffer(str);
+	    } else {
+		this.writeToStringBuffer(str);
+	    }
+	}.bind(this, this);
+	this.addCode(0, index++, function parse() {
+	    counted = false;
+	    PARSEIMPL();
 	})
 	const BL = index;
 	this.addCode(0, index++, function bl() {
@@ -856,24 +886,16 @@ const ForthVM = class {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
 	    const name = this.readStringFromStack();
-	    const found = this.findWord(name);
-	    if(found === 0) {
-		this.abort(name + " ?");
-	    } else {
-		this.push(found.cfa);
-	    }
+	    const found = this.findWordOrAbort(name);
+	    this.push(found.cfa);
 	}, '\'')
 	this.addCode(-1, index++, function bracket_tick() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
 	    const name = this.readStringFromStack();
-	    const found = this.findWord(name);
-	    if(found === 0) {
-		this.abort(name + " ?");
-	    } else {
-		this.writeHere(this.findWord('LITERAL').cfa);
-		this.writeHere(found.cfa);
-	    }
+	    const found = this.findWordOrAbort(name);
+	    this.writeHere(this.findWordOrAbort('LITERAL').cfa);
+	    this.writeHere(found.cfa);
 	}, '[\']')
 	this.addCode(-1, index++, function lbracket() {
 	    this.state = 0;
@@ -904,12 +926,8 @@ const ForthVM = class {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
 	    const name = this.readStringFromStack();
-	    const found = this.findWord(name);
-	    if(found === 0) {
-		this.abort(name + " ?");
-	    } else {
-		this.writeHere(found.cfa);
-	    }
+	    const found = this.findWordOrAbort(name);
+	    this.writeHere(found.cfa);
 	}, '[compile]')
 	this.addCode(0, index++, function immediate() {
 	    const latestWord = Word.fromAddress(this, this.latest);
@@ -922,12 +940,8 @@ const ForthVM = class {
 	})
 	this.addCode(0, index++, function compile_comma() {
 	    const xt = this.stack.pop();
-	    const found = this.findByXt(xt);
-	    if(found === 0) {
-		this.abort("Invalid execution token: " + xt);
-	    } else {
-		this.writeHere(xt);
-	    }
+	    const found = this.findByXtOrAbort(xt);
+	    this.writeHere(xt);
 	}, 'compile,')
 	this.addCode(0, index++, function d() {
 	    this.systemOut.log(this.stack.pop(true).toString(this.getBase()));
@@ -1423,27 +1437,19 @@ const ForthVM = class {
 	    const xt = this.pop();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const pfa = this.findWord(this.readStringFromStack()).pfa;
+	    const pfa = this.findWordOrAbort(this.readStringFromStack()).pfa;
 	    this.memory.setUint32(pfa, xt);
 	})
 	this.addCode(0, index++, function defer_store() {
 	    const deferred = this.pop();
 	    const xt = this.pop();
-	    const found = this.findByXt(deferred);
-	    if(found === 0) {
-		this.abort("Invalid execution token: " + xt);
-	    } else {
-		this.memory.setUint32(deferred + this.cellSize, xt);
-	    }
+	    const found = this.findByXtOrAbort(deferred);
+	    this.memory.setUint32(deferred + this.cellSize, xt);
 	}, 'defer!')
 	this.addCode(0, index++, function defer_fetch() {
 	    const deferred = this.pop();
-	    const found = this.findByXt(deferred);
-	    if(found === 0) {
-		this.abort("Invalid execution token: " + xt);
-	    } else {
-		this.push(this.memory.getUint32(deferred + this.cellSize));
-	    }
+	    const found = this.findByXtOrAbort(deferred);
+	    this.push(this.memory.getUint32(deferred + this.cellSize));
 	}, 'defer@')
 	this.addCode(0, index++, function action_of() {
 	    this.callCode(BL);
@@ -1451,6 +1457,10 @@ const ForthVM = class {
 	    const pfa = this.findWord(this.readStringFromStack()).pfa;
 	    this.push(this.memory.getUint32(pfa));
 	}, 'action-of')
+	this.addCode(0, index++, function word() {
+	    counted = true;
+	    PARSEIMPL();
+	})
     }
     getNextWord(endChar) {
 	let word = '';
