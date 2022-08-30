@@ -1445,7 +1445,12 @@ const ForthVM = class {
 		this.push(this.memory.getUint32(deferred + this.cellSize));
 	    }
 	}, 'defer@')
-
+	this.addCode(0, index++, function action_of() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    const pfa = this.findWord(this.readStringFromStack()).pfa;
+	    this.push(this.memory.getUint32(pfa));
+	}, 'action-of')
     }
     getNextWord(endChar) {
 	let word = '';
