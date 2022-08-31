@@ -304,7 +304,9 @@ const ForthVM = class {
     }
 
     rpop(signed, label) {
-	return this.rstack.pop(signed, label);
+	const a = this.rstack.pop(signed, label);
+	this.lastWord = a;
+	return a;
     }
 
     rpushNested(val, label) {
@@ -522,6 +524,9 @@ const ForthVM = class {
 	    }
 	} catch (e) {
 	    this.clearStacks();
+	    if(this.lastWord && !e.includes('?')) {
+		this.systemOut.log('Abort called while executing ' + Word.fromAddress(this, this.findByXt(this.lastWord)).name);
+	    }
 	    throw(e);
 	}
     }
@@ -1521,7 +1526,7 @@ const ForthVM = class {
 		    currentName = this.readStringFromStack();
 		    if(currentName.toUpperCase() === '[IF]') {
 			nestCount++;
-		    } else if(currentName.toUpperCase() === '[THEN]') {
+		    } else if(currentName.toUpperCase() === '[THEN]' || (currentName.toUpperCase() === '[ELSE]' && nestCount === 0)) {
 			nestCount--;
 		    }
 		}
@@ -1543,6 +1548,34 @@ const ForthVM = class {
 	}, '[else]')
 	this.addCode(-1, index++, function bracketThen() {
 	}, '[then]')
+	this.addCode(0, index++, function _true() {
+	    this.pushTrue();
+	}, 'true')
+	this.addCode(0, index++, function _false() {
+	    this.pushFalse();
+	}, 'false')
+	this.addCode(0, index++, function depth() {
+	    this.push(this.stack.depth());
+	})
+	this.addCode(0, index++, function source() {
+	    this.push(0);
+	    this.push(this.tib.length);
+	})
+	this.addCode(0, index++, function ne() {
+	    if(this.pop() !== this.pop()) {
+		this.pushTrue();
+	    }
+	    else {
+		this.pushFalse();
+	    }
+	}, '<>')
+	this.addCode(0, index++, function or() {
+	    this.push(this.pop() | this.pop());
+	})
+	this.addCode(0, index++, function plus_store() {
+	    const a = this.pop();
+	    this.setUint32(a, (this.getUint32(a) + this.pop()));
+	}, '+!')
     }
     getNextWord(endChar) {
 	let word = '';
