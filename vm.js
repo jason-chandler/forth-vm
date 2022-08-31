@@ -1432,8 +1432,8 @@ const ForthVM = class {
 	    }
 	})
 	this.addCode(0, index++,  function dump() {
-	    const addr = this.pop();
 	    const limit = this.pop();
+	    const addr = this.pop();
 	    let str = '';
 	    for(let i = 0; i < limit; i++) {
 		str += this.memory.getByte(addr + i);
@@ -1442,8 +1442,8 @@ const ForthVM = class {
 	    this.systemOut.log(str);
 	})
 	this.addCode(0, index++,  function defdump() {
-	    const cfa = this.pop();
 	    const limit = this.pop();
+	    const cfa = this.pop();
 	    let str = '';
 	    for(let i = 0; i < limit; i+= this.cellSize) {
 		const defcfa = this.memory.getUint32(cfa + i);
@@ -1510,6 +1510,39 @@ const ForthVM = class {
 		this.pushFalse();
 	    }
 	}, 'environment?')
+	this.addCode(-1, index++, function bracketIf() {
+	    let currentName = '';
+	    let nestCount = 0;
+	    let max = 0
+	    if(this.pop() === 0) {
+		while((currentName.toUpperCase() !== '[ELSE]' && currentName.toUpperCase() !== '[THEN]') || nestCount >= 0) {
+		    this.callCode(BL);
+		    this.callCode(PARSE);
+		    currentName = this.readStringFromStack();
+		    if(currentName.toUpperCase() === '[IF]') {
+			nestCount++;
+		    } else if(currentName.toUpperCase() === '[THEN]') {
+			nestCount--;
+		    }
+		}
+	    }
+	}, '[if]')
+	this.addCode(-1, index++, function bracketElse() {
+	    let currentName = '';
+	    let nestCount = 0;
+	    while(currentName.toUpperCase() !== '[THEN]' || nestCount >= 0) {
+		this.callCode(BL);
+		this.callCode(PARSE);
+		currentName = this.readStringFromStack();
+		if(currentName.toUpperCase() === '[IF]') {
+		    nestCount++;
+		} else if(currentName.toUpperCase() === '[THEN]') {
+		    nestCount--;
+		}
+	    }
+	}, '[else]')
+	this.addCode(-1, index++, function bracketThen() {
+	}, '[then]')
     }
     getNextWord(endChar) {
 	let word = '';
