@@ -40,6 +40,14 @@ class Stack {
 	}
     }
 
+    dpush(val, label) {
+	const low = this.sp;
+	this.push(0, label);
+	const high = this.sp;
+	this.push(0, label);
+	this.vm.memory.view.setBigInt64(high, BigInt(val));
+    }
+
     pop(signed, label, skipLeave) {
 	let leaveStack = [];
 	if(this.empty()) {
@@ -241,6 +249,7 @@ const ForthVM = class {
     strBufPointer;
     controlFlowUnresolved;
     environment;
+    skip;
     
     constructor() {
 	this.cellSize = 4;
@@ -254,6 +263,7 @@ const ForthVM = class {
 	this.strBufEnd = this.memory.memorySize - (804 * this.cellSize);
 	this.strBufPointer = this.strBufStart;
 	this.tib = '';
+	this.tibCopy = this.memory.memorySize - (20040 * this.cellSize);
 	this.state = 0;
 	this.toIn = 1;
 	this.baseAddr = this.memory.memorySize - (1208 * this.cellSize);
@@ -265,6 +275,7 @@ const ForthVM = class {
 	this.controlFlowUnresolved = 0;
 	this.initCodeWords();
 	this.environment = [];
+	this.skip = 0;
     }
 
     getIp() {
@@ -300,6 +311,10 @@ const ForthVM = class {
     }
 
     rpush(val, label) {
+	if(val !== 0) {
+	    //console.log(Word.fromAddress(this, this.findByXt(val)).name);
+	    //console.log(Word.fromAddress(this, this.findByXt(val)));
+	}
 	this.rstack.push(val, label);
     }
 
@@ -326,7 +341,7 @@ const ForthVM = class {
 	    addr = this.stack.pop();
 	}
 	const mod = addr % this.cellSize;
-	return addr + (this.cellSize - mod);
+	return (mod === 0 && this.memory.getUint32(addr) === 0) ? addr : addr + (this.cellSize - mod);
     }
 
     alignDp() {
@@ -442,17 +457,39 @@ const ForthVM = class {
     }
 
     doCol() {
-	let selectedWord = this.memory.getUint32(this.ip);
+	try{
+	    const selectedWord = this.memory.getUint32(this.ip);
 	// handle code
 	if(selectedWord === 0) {
-	    this.callCode(this.memory.getUint32(this.ip + this.cellSize));
+	    try {
+		
+		const a = this.memory.getUint32(this.ip + this.cellSize);
+		try {
+		    //	    console.log(this.codeTable[a]);
+		    const b = this.callCode(a);
+		    if(typeof(b) === 'Promise') {
+			b.then((val) => val);
+		    }
+		} catch (e) {
+		    this.systemOut.log('CODE index called: ' + a);
+		    throw(e);
+		}
+	    } catch (e) {
+		this.systemOut.log('CODE pointer at ' + this.ip + this.cellSize);
+		throw(e);
+	    }
 	} else {
+	    //console.log(Word.fromAddress(this, this.findByXt(selectedWord)).name);
 	    this.rpush(this.ip + this.cellSize, 'jump')
 	    this.rpush(selectedWord, 'jump');
 	}
+	} catch(e) {
+	    this.systemOut.log('IP: ' + this.ip);
+	    throw(e);
+	}
     }
 
-    loadFile(filePath) {
+    sloadFile(filePath) {
 	var result = null;
 	var xmlhttp = new XMLHttpRequest();
 	xmlhttp.open("GET", location.href + filePath, false);
@@ -460,24 +497,30 @@ const ForthVM = class {
 	if (xmlhttp.status==200) {
 	    result = xmlhttp.responseText;
 	}
-	return result;
+	return result.toString();
+	    
     }
 
+    async loadFile(filePath) {
+	let a = await fetch(filePath);
+	let b = await a.text();
+	return b;
+    }
 
     // OUTER INTERPRETER
     
     isNotSpace(character) {
-	return character !== ' ' && character !== '\n';
+	return character.trim() !== '' && character !== ' ' && character !== '\n';
     }
 
     filterWeirdSpacing(str) {
 	//let blankFn = function(word) { return word !== '' && word !== undefined && word !== null; };
-	return String(str)
-	    .trim()
-	    .replaceAll('\r', ' ')
-	    .replaceAll('\t', ' ')
-	    .replaceAll('\n\n', '\n')
-	    .replaceAll('\n', ' \n ');
+	const a = String(str)
+	      .trim()
+	      .replaceAll('\t', '\n')
+	      .replaceAll('\n\n', '\n')
+	      .replaceAll('\n', ' \n ');
+	return a;
     }
 
     
@@ -491,56 +534,73 @@ const ForthVM = class {
 
     getNextWord() {
 	let word = '';
-	while(this.toIn < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
+	while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
 	    word += this.tib[this.getToIn()];
 	    this.toInInc();
 	}
 	return word;
     }
 
+    isImmediateControlWord(word) {
+	const upWord = word.toUpperCase();
+	return upWord === '[IF]' || upWord === '[ELSE]' || upWord === '[THEN]';
+    }
+
+    shouldSkip(word) {
+	return this.skip > 0 && !this.isImmediateControlWord(word);
+    }
+
     processWord(word) {
 	try {
-	    let foundWord = this.findWord(word);
-	    let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
-	    if(isWord) {
-		if(foundWord.immediate === -1 || this.state === 0) {
-		    this.rpush(foundWord.cfa, 'jump');
-		    do {
-			this.ip = this.rpop(false, 'jump');
-			this.doCol();
-		    } while (this.rstack.depth() > 0);
-		} else {
-		    this.writeHere(foundWord.cfa);
+	    if(this.isNotSpace(word) && !this.shouldSkip(word)) {
+		let foundWord = this.findWord(word);
+		let isWord = foundWord !== 0 && foundWord !== null && foundWord !== undefined;
+		if(isWord) {
+		    if(foundWord.immediate === -1 || this.state === 0) {
+			this.rpush(foundWord.cfa, 'jump');
+			do {
+			    this.ip = this.rpop(false, 'jump');
+			    this.doCol();
+			} while (this.rstack.depth() > 0);
+		    } else {
+			this.writeHere(foundWord.cfa);
+		    }
+		} else if(this.isNumber(word)) {
+		    if(this.state === 0) {
+			this.stack.push(parseInt(word, this.getBase()));
+		    } else {
+			this.writeHere(this.findWord('LITERAL').cfa);
+			this.writeHere(parseInt(word, this.getBase()));
+		    }
+		} 
+		else {
+		    throw(word + ' ?');
 		}
-	    } else if(this.isNumber(word)) {
-		if(this.state === 0) {
-		    this.stack.push(parseInt(word, this.getBase()));
-		} else {
-		    this.writeHere(this.findWord('LITERAL').cfa);
-		    this.writeHere(parseInt(word, this.getBase()));
-		}
-	    } else {
-		throw(word + ' ?');
 	    }
 	} catch (e) {
 	    this.clearStacks();
-	    if(this.lastWord && !e.includes('?')) {
+	    if(this.lastWord && !e.toString().includes('?')) {
 		this.systemOut.log('Abort called while executing ' + Word.fromAddress(this, this.findByXt(this.lastWord)).name);
 	    }
 	    throw(e);
 	}
     }
 
-    interpret(line) {
+    interpret(line, fromChar) {
 	try {
 	    this.tib = line;
+	    this.writeString(this.tibCopy, line)
 	    let len;
 	    if(line === null || line === undefined || line.length === undefined) {
 		len = 0;
 	    } else {
 		len = this.tib.length;
 	    }
-	    this.resetToIn();
+	    if(!fromChar) {
+		this.resetToIn();
+	    } else {
+		this.memory.setUint32(this.toIn, fromChar);
+	    }
 	    while(this.getToIn() < len) {
 		let word = this.getNextWord();
 		this.toInInc();
@@ -583,10 +643,14 @@ const ForthVM = class {
 	this.stack.clear();
 	this.rstack.clear();
 	this.controlFlowUnresolved = 0;
+	this.resetTib();
+    }
+
+    resetTib() {
 	this.resetToIn();
 	this.tib = '';
     }
-
+    
     forgetWordBeingDefined() {
 	this.dp = this.hiddenWord.address;
 	this.state = 0;
@@ -795,6 +859,7 @@ const ForthVM = class {
 		this.toInInc();
 	    }
 	    this.toInInc();
+	    //console.log(this.getToIn());
 	}, '\\')
 	this.addCode(-1, index++, function dot_lparen() {
 	    let parseChar = String.fromCharCode(41); // right paren
@@ -1078,6 +1143,7 @@ const ForthVM = class {
 	    this.push(len);
 	    this.rpush(this.align(a + len), 'jump');
 	}, '(s")')
+	const SQUOTE = index;
 	this.addCode(-1, index++, function s_quote() {
 	    this.stack.push(34);
 	    this.callCode(PARSE);
@@ -1088,9 +1154,23 @@ const ForthVM = class {
 		this.alignDp();
 	    }
 	}, 's"')
+	const TYPE = index;
 	this.addCode(0, index++, function type() {
 	    this.systemOut.log(this.readStringFromStack());
 	})
+	this.addCode(-1, index++, function dot_quote() {
+	    this.stack.push(34);
+	    this.callCode(PARSE);
+	    if(this.state === 1) {
+		this.writeHere(this.findWord('(S")').cfa);
+		const str = this.readStringFromStack();
+		this.writeCountedStringHere(str);
+		this.alignDp();
+		this.writeHere(this.findWord('TYPE').cfa);
+	    } else {
+		this.callCode(TYPE);
+	    }
+	}, '."')
 	this.addCode(0, index++, function drop() {
 	    this.pop();
 	})
@@ -1222,7 +1302,8 @@ const ForthVM = class {
 		    const doSys = this.stack.pop(false, 'do-sys');
 		    this.writeHere(doSys);
 		    while(leaveStack.length !== 0) {
-			this.memory.setUint32(leaveStack.pop(), this.dp);
+			const leaveLoc = leaveStack.pop();
+			this.memory.setUint32(leaveLoc, this.dp);
 		    }
 		    this.controlFlowUnresolved++;
 		} else {
@@ -1360,14 +1441,16 @@ const ForthVM = class {
 	    this.push(this.pop(true) - 1);
 	}, '1-')
 	this.addCode(0, index++, function run_leave() {
+	    const a = this.rpop(false, 'jump');
 	    this.rpop(false, 'loop-sys-limit');
 	    this.rpop(false, 'loop-sys-index');
+	    const branchAddr = this.memory.getUint32(a);
+	    this.rpush(branchAddr, 'jump');
 	}, '(leave)')
 	this.addCode(-1, index++, function leave() {
 	    if(this.state === 1) {
 		if(this.unresolvedControlFlow()) {
-		    this.writeHere(this.findWord('(LEAVE').cfa);
-		    this.writeHere(this.findWord('BRANCH').cfa);
+		    this.writeHere(this.findWord('(LEAVE)').cfa);
 		    this.push(this.dp, 'leave-sys');
 		    this.writeHere(0);
 		} else {
@@ -1421,7 +1504,7 @@ const ForthVM = class {
 	    this.push(len);
 	})
 	this.addCode(0, index++, function cr() {
-	    this.push('\n'.charCodeAt(0));
+	    this.systemOut.log('\n');
 	})
 	this.addCode(0, index++, function colon_noname() {
 	    this.clearHidden();
@@ -1502,10 +1585,19 @@ const ForthVM = class {
 	this.addCode(0, index++, function include() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
+	    let tempTib = this.tib;
+	    let resumeToIn = this.getToIn();
+	    this.tib = '';
 	    const fileName = this.readStringFromStack();
-	    let file = this.filterWeirdSpacing(this.loadFile(fileName));
-	    const substrindex = this.tib.match('include ' + fileName).index + 'include '.length + fileName.length;
-	    this.tib = this.tib.substring(0, substrindex) + ' ' + file + ' ' + this.tib.substring(substrindex);
+	    return this.loadFile(fileName).then((loadedFile) => {
+		const file = this.filterWeirdSpacing(loadedFile);
+		const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
+		const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
+		for(let splitTib of resumeTib.split('\n')) {
+		    //console.log(splitTib);
+		    this.interpret(splitTib + ' \n ');
+		}
+	    })
 	})
 	this.addCode(0, index++, function environmentq() {
 	    const query = this.readStringFromStack();
@@ -1516,37 +1608,19 @@ const ForthVM = class {
 	    }
 	}, 'environment?')
 	this.addCode(-1, index++, function bracketIf() {
-	    let currentName = '';
-	    let nestCount = 0;
-	    let max = 0
-	    if(this.pop() === 0) {
-		while((currentName.toUpperCase() !== '[ELSE]' && currentName.toUpperCase() !== '[THEN]') || nestCount >= 0) {
-		    this.callCode(BL);
-		    this.callCode(PARSE);
-		    currentName = this.readStringFromStack();
-		    if(currentName.toUpperCase() === '[IF]') {
-			nestCount++;
-		    } else if(currentName.toUpperCase() === '[THEN]' || (currentName.toUpperCase() === '[ELSE]' && nestCount === 0)) {
-			nestCount--;
-		    }
-		}
+	    if(this.skip > 0 || this.pop() === 0) {
+		this.skip++;
 	    }
 	}, '[if]')
 	this.addCode(-1, index++, function bracketElse() {
-	    let currentName = '';
-	    let nestCount = 0;
-	    while(currentName.toUpperCase() !== '[THEN]' || nestCount >= 0) {
-		this.callCode(BL);
-		this.callCode(PARSE);
-		currentName = this.readStringFromStack();
-		if(currentName.toUpperCase() === '[IF]') {
-		    nestCount++;
-		} else if(currentName.toUpperCase() === '[THEN]') {
-		    nestCount--;
-		}
+	    if(this.skip === 1) {
+		this.skip--;
 	    }
 	}, '[else]')
 	this.addCode(-1, index++, function bracketThen() {
+	    if(this.skip > 0) {
+		this.skip--;
+	    }
 	}, '[then]')
 	this.addCode(0, index++, function _true() {
 	    this.pushTrue();
@@ -1558,7 +1632,7 @@ const ForthVM = class {
 	    this.push(this.stack.depth());
 	})
 	this.addCode(0, index++, function source() {
-	    this.push(0);
+	    this.push(this.tibCopy);
 	    this.push(this.tib.length);
 	})
 	this.addCode(0, index++, function ne() {
@@ -1572,10 +1646,49 @@ const ForthVM = class {
 	this.addCode(0, index++, function or() {
 	    this.push(this.pop() | this.pop());
 	})
+	this.addCode(0, index++, function xor() {
+	    this.push(this.pop() ^ this.pop());
+	})
+	this.addCode(0, index++, function lshift() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    this.push(a << b);
+	})
+	this.addCode(0, index++, function rshift() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    this.push(a >> b);
+	})
 	this.addCode(0, index++, function plus_store() {
 	    const a = this.pop();
 	    this.setUint32(a, (this.getUint32(a) + this.pop()));
 	}, '+!')
+	this.addCode(0, index++, function qdup() {
+	    const a = this.pop();
+	    this.push(a);
+	    if(a !== 0) {
+		this.push(a);
+	    }
+	}, '?dup')
+	this.addCode(0, index++, function negate() {
+	    this.push(0 - this.pop());
+	})
+	this.addCode(0, index++, function invert() {
+	    this.push(~this.pop());
+	})
+	this.addCode(0, index++, function and() {
+	    this.push(this.pop() & this.pop());
+	})
+	this.addCode(0, index++, function star_slash() {
+	    const c = this.pop();
+	    const b = this.pop();
+	    const a = this.pop();
+	    this.push((a * b) / c);
+	}, '*/')
+	this.addCode(0, index++, function mtimes() {
+	    this.stack.dpush(this.pop() * this.pop());
+	}, 'm*')
+	
     }
     getNextWord(endChar) {
 	let word = '';
