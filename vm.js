@@ -517,7 +517,7 @@ const ForthVM = class {
 	//let blankFn = function(word) { return word !== '' && word !== undefined && word !== null; };
 	const a = String(str)
 	      .trim()
-	      .replaceAll('\t', '\n')
+	      .replaceAll('\t', ' ')
 	      .replaceAll('\n\n', '\n')
 	      .replaceAll('\n', ' \n ');
 	return a;
@@ -962,7 +962,7 @@ const ForthVM = class {
 	    this.stack.push(this.memory.getUint32(this.rpop(false, 'jump')));
 	})
 	this.addCode(0, index++, function equal() {
-	    if(this.pop() === this.pop()) {
+	    if(this.pop(true) === this.pop(true)) {
 		this.pushTrue();
 	    } else {
 		this.pushFalse();
@@ -1050,32 +1050,32 @@ const ForthVM = class {
 	    this.systemOut.log(this.stack.pop(true).toString(this.getBase()));
 	}, '.')
 	this.addCode(0, index++, function plus() {
-	    this.stack.push(this.stack.pop() + this.stack.pop());
+	    this.stack.push(this.stack.pop(true) + this.stack.pop());
 	}, '+')
 	this.addCode(0, index++, function minus() {
 	    const b = this.stack.pop();
-	    this.stack.push(this.stack.pop() - b);
+	    this.stack.push(this.stack.pop(true) - b);
 	}, '-')
 	this.addCode(0, index++, function star() {
-	    this.stack.push(this.stack.pop() * this.stack.pop());
+	    this.stack.push(this.stack.pop(true) * this.stack.pop());
 	}, '*')
 	this.addCode(0, index++, function slash() {
-	    const b = this.stack.pop();
-	    this.stack.push(Math.floor(this.stack.pop() / b));
+	    const b = this.stack.pop(true);
+	    this.stack.push(Math.floor(this.stack.pop(true) / b));
 	}, '/')
 	this.addCode(0, index++, function mod() {
-	    const b = this.stack.pop();
-	    this.stack.push(this.stack.pop() % b);
+	    const b = this.stack.pop(true);
+	    this.stack.push(this.stack.pop(true) % b);
 	})
 	this.addCode(0, index++, function slashmod() {
-	    const b = this.stack.pop();
-	    const a = this.stack.pop();
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
 	    this.stack.push(a % b);
 	    this.stack.push(Math.floor(a / b));
 	}, '/mod')
 	this.addCode(0, index++, function less() {
-	    const b = this.stack.pop();
-	    const a = this.stack.pop();
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
 	    if(a < b) {
 		this.pushTrue();
 	    } else {
@@ -1083,8 +1083,8 @@ const ForthVM = class {
 	    }
 	}, '<')
 	this.addCode(0, index++, function greater() {
-	    const b = this.stack.pop();
-	    const a = this.stack.pop();
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
 	    if(a > b) {
 		this.pushTrue();
 	    } else {
@@ -1092,8 +1092,8 @@ const ForthVM = class {
 	    }
 	}, '>')
 	this.addCode(0, index++, function lesseq() {
-	    const b = this.stack.pop();
-	    const a = this.stack.pop();
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
 	    if(a <= b) {
 		this.pushTrue();
 	    } else {
@@ -1101,8 +1101,8 @@ const ForthVM = class {
 	    }
 	}, '<=')
 	this.addCode(0, index++, function greateq() {
-	    const b = this.stack.pop();
-	    const a = this.stack.pop();
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
 	    if(a >= b) {
 		this.pushTrue();
 	    } else {
@@ -1594,8 +1594,11 @@ const ForthVM = class {
 		const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
 		const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
 		for(let splitTib of resumeTib.split('\n')) {
-		    //console.log(splitTib);
-		    this.interpret(splitTib + ' \n ');
+		    const result = this.interpret(splitTib + ' \n ');
+		    if(result !== "ok" && result !== "compiled") {
+			this.systemOut.log('Error in file read, got: ' + result);
+			break;
+		    }
 		}
 	    })
 	})
@@ -1657,7 +1660,7 @@ const ForthVM = class {
 	this.addCode(0, index++, function rshift() {
 	    const b = this.pop();
 	    const a = this.pop();
-	    this.push(a >> b);
+	    this.push(a >>> b);
 	})
 	this.addCode(0, index++, function plus_store() {
 	    const a = this.pop();
@@ -1680,15 +1683,48 @@ const ForthVM = class {
 	    this.push(this.pop() & this.pop());
 	})
 	this.addCode(0, index++, function star_slash() {
-	    const c = this.pop();
-	    const b = this.pop();
-	    const a = this.pop();
+	    const c = this.pop(true);
+	    const b = this.pop(true);
+	    const a = this.pop(true);
 	    this.push((a * b) / c);
 	}, '*/')
 	this.addCode(0, index++, function mtimes() {
-	    this.stack.dpush(this.pop() * this.pop());
+	    this.stack.dpush(this.pop(true) * this.pop(true));
 	}, 'm*')
-	
+	this.addCode(0, index++, function twotimes() {
+	    this.push(this.pop(true) << 1);
+	}, '2*')
+	this.addCode(0, index++, function twodiv() {
+	    this.push(this.pop(true) >> 1);
+	}, '2/')
+	this.addCode(0, index++, function zeroeq() {
+	    if(this.pop() === 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0=')
+	this.addCode(0, index++, function greater_zero() {
+	    if(this.pop(true) > 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0>')
+	this.addCode(0, index++, function less_zero() {
+	    if(this.pop(true) < 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0<')
+	this.addCode(0, index++, function neq_zero() {
+	    if(this.pop(true) !== 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0<>')
     }
     getNextWord(endChar) {
 	let word = '';
