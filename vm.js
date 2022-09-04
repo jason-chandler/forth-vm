@@ -800,17 +800,20 @@ const ForthVM = class {
 
     initCodeWords() {
 	let index = 0;
+	const SWAP = index;
 	this.addCode(0, index++, function swap() {
 	    let a = this.stack.pop();
 	    let b = this.stack.pop();
 	    this.stack.push(a);
 	    this.stack.push(b);
 	})
+	const DUP = index;
 	this.addCode(0, index++, function dup() {
 	    let a = this.stack.pop();
 	    this.stack.push(a);
 	    this.stack.push(a);
 	})
+	const ROT = index;
 	this.addCode(0, index++, function rot() {
 	    let a = this.stack.pop();
 	    let b = this.stack.pop();
@@ -1725,6 +1728,61 @@ const ForthVM = class {
 		this.pushFalse();
 	    }
 	}, '0<>')
+	this.addCode(0, index++, function unsigned_dot() {
+	    this.systemOut.log(this.stack.pop().toString(this.getBase()));
+	}, 'u.')
+	this.addCode(0, index++, function unsigned_less() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    if(a < b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'u<')
+	this.addCode(0, index++, function unsigned_greater() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    if(a > b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'u>')
+	this.addCode(0, index++, function min() {
+	    this.push(Math.min(this.pop(true), this.pop(true)));
+	})
+	this.addCode(0, index++, function max() {
+	    this.push(Math.max(this.pop(true), this.pop(true)));
+	})
+	this.addCode(0, index++, function twodrop() {
+	    this.pop();
+	    this.pop();
+	}, '2drop')
+	this.addCode(0, index++, function twodup() {
+	    this.push(this.stack.pick(1));
+	    this.push(this.stack.pick(1));
+	}, '2dup')
+	this.addCode(0, index++, function twoover() {
+	    this.push(this.stack.pick(3));
+	    this.push(this.stack.pick(3));
+	}, '2over')
+	this.addCode(0, index++, function twoswap() {
+	    this.rpush(this.pop());
+	    this.callCode(ROT);
+	    this.callCode(ROT);
+	    this.push(this.rpop());
+	    this.callCode(ROT);
+	    this.callCode(ROT);
+	}, '2swap')
+	this.addCode(0, index++, function qdup() {
+	    const a = this.pop();
+	    if(a !== 0) {
+		this.push(a);
+	    }
+	    this.push(a);
+	}, '?dup')
+	
     }
     getNextWord(endChar) {
 	let word = '';
