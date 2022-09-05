@@ -325,21 +325,21 @@ const ForthVM = class {
     peekIndices() {
 	// if index < limit when signed, return true since signed is safe for +1
 	// else return false and try using unsigned loop indices
-	const index = this.rpop(true, 'loop-sys-index');
 	const limit = this.rpop(true, 'loop-sys-limit');
-	this.rpush(limit, 'loop-sys-limit');
+	const index = this.rpop(true, 'loop-sys-index');
 	this.rpush(index, 'loop-sys-index');
-	return index < limit;
+	this.rpush(limit, 'loop-sys-limit');
+	return index <= limit;
     }
 
     peekPlusIndices() {
-	const index = this.rpop(true, 'loop-sys-index');
 	const limit = this.rpop(true, 'loop-sys-limit');
+	const index = this.rpop(true, 'loop-sys-index');
 	const step = this.pop(true);
-	this.rpush(limit, 'loop-sys-limit');
 	this.rpush(index, 'loop-sys-index');
+	this.rpush(limit, 'loop-sys-limit');
 	this.push(step);
-	return index < limit && step > 0;
+	return (index <= limit && step > 0) || (index >= limit && step < 0) ;
     }
 
     rpush(val, label) {
@@ -642,6 +642,7 @@ const ForthVM = class {
 	    }
 	    while(this.getToIn() < len) {
 		let word = this.getNextWord();
+		// console.log('nextWord ' + word);
 		this.toInInc();
 		this.processWord(word);
 		len = this.tib.length;
@@ -1208,10 +1209,10 @@ const ForthVM = class {
 	    this.push(this.align());
 	})
 	this.addCode(0, index++, function i() {
-	    this.stack.push(this.rstack.pick(3));
+	    this.stack.push(this.rstack.pick(2));
 	})
 	this.addCode(0, index++, function j() {
-	    this.stack.push(this.rstack.pick(6));
+	    this.stack.push(this.rstack.pick(4));
 	})
 	this.addCode(0, index++, function pick() {
 	    this.push(this.stack.pick(this.pop(false)));
@@ -1369,7 +1370,7 @@ const ForthVM = class {
 	    const signed = this.peekPlusIndices();
 	    let limit = this.rpop(signed, 'loop-sys-limit');
 	    let index = this.rpop(signed, 'loop-sys-index') + this.pop(signed);
-	    if(limit === index) {
+	    if((limit - 1) === index) {
 		this.pushTrue();
 	    } else {
 		this.rpush(index, 'loop-sys-index');
