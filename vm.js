@@ -325,11 +325,21 @@ const ForthVM = class {
     peekIndices() {
 	// if index < limit when signed, return true since signed is safe for +1
 	// else return false and try using unsigned loop indices
-	const index = this.pop(true);
-	const limit = this.pop(true);
-	this.push(limit);
-	this.push(index);
+	const index = this.rpop(true, 'loop-sys-index');
+	const limit = this.rpop(true, 'loop-sys-limit');
+	this.rpush(limit, 'loop-sys-limit');
+	this.rpush(index, 'loop-sys-index');
 	return index < limit;
+    }
+
+    peekPlusIndices() {
+	const index = this.rpop(true, 'loop-sys-index');
+	const limit = this.rpop(true, 'loop-sys-limit');
+	const step = this.pop(true);
+	this.rpush(limit, 'loop-sys-limit');
+	this.rpush(index, 'loop-sys-index');
+	this.push(step);
+	return index < limit && step > 0;
     }
 
     rpush(val, label) {
@@ -1271,11 +1281,8 @@ const ForthVM = class {
 	})
 	this.addCode(0, index++, function run_do() {
 	    const a = this.rpop(false, 'jump');
-	    const signed = this.peekIndices();
-	    console.log('signed is okay ' + signed);
-	    this.rpush(this.stack.pop(signed), 'loop-sys-index');
-	    this.rpush(this.stack.pop(signed), 'loop-sys-limit');
-	    this.rpush(signed ? -1 : 0, 'loop-sys-signed');
+	    this.rpush(this.stack.pop(), 'loop-sys-index');
+	    this.rpush(this.stack.pop(), 'loop-sys-limit');
 	    this.rpush(a, 'jump');
 	}, '(do)')
 	this.addCode(-1, index++, function _do() {
@@ -1345,30 +1352,28 @@ const ForthVM = class {
 	}, 'endcase')
 	this.addCode(0, index++, function runLoop() {
 	    let nextAddr = this.rpop(false, 'jump');
-	    let signed = this.rpop(true, 'loop-sys-signed');
-	    let limit = this.rpop(signed === -1, 'loop-sys-limit');
-	    let index = this.rpop(signed === -1, 'loop-sys-index') + 1;
+	    const signed = this.peekIndices();
+	    let limit = this.rpop(signed, 'loop-sys-limit');
+	    let index = this.rpop(signed, 'loop-sys-index') + 1;
 	    if(limit === index) {
 		this.pushTrue();
 	    } else {
 		this.rpush(index, 'loop-sys-index');
 		this.rpush(limit, 'loop-sys-limit');
-		this.rpush(signed, 'loop-sys-signed');
 		this.pushFalse();
 	    }
 	    this.rpush(nextAddr, 'jump');
 	}, '(loop)')
 	this.addCode(0, index++, function runPlusLoop() {
 	    let nextAddr = this.rpop(false, 'jump');
-	    let signed = this.rpop(true, 'loop-sys-signed');
-	    let limit = this.rpop(signed === -1, 'loop-sys-limit');
-	    let index = this.rpop(signed === -1, 'loop-sys-index') + this.pop(signed === -1);
+	    const signed = this.peekPlusIndices();
+	    let limit = this.rpop(signed, 'loop-sys-limit');
+	    let index = this.rpop(signed, 'loop-sys-index') + this.pop(signed);
 	    if(limit === index) {
 		this.pushTrue();
 	    } else {
 		this.rpush(index, 'loop-sys-index');
 		this.rpush(limit, 'loop-sys-limit');
-		this.rpush(signed, 'loop-sys-signed');
 		this.pushFalse();
 	    }
 	    this.rpush(nextAddr, 'jump');
@@ -1528,7 +1533,6 @@ const ForthVM = class {
 	}, '1-')
 	this.addCode(0, index++, function run_leave() {
 	    const a = this.rpop(false, 'jump');
-	    this.rpop(true, 'loop-sys-signed');
 	    this.rpop(true, 'loop-sys-limit');
 	    this.rpop(true, 'loop-sys-index');
 	    const branchAddr = this.memory.getUint32(a);
