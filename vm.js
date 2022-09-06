@@ -1552,6 +1552,12 @@ const ForthVM = class {
 		this.abort('Cannot use control flow construct \'LEAVE\' in interpret mode');
 	    }
 	})
+	this.addCode(0, index++, function unloop() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpop(false, 'loop-sys-limit');
+	    this.rpop(false, 'loop-sys-index');
+	    this.rpush(a, 'jump');
+	})
 	this.addCode(-1, index++, function _if() {
 	    if(this.getState() === 1) {
 		this.writeHere(this.findWord('0BRANCH').cfa);
@@ -1911,6 +1917,23 @@ const ForthVM = class {
 	})
 	this.addCode(0, index++, function state() {
 	    this.push(this.stateAddr);
+	})
+	this.addCode(0, index++, function tobody() {
+	    this.push(this.pop() + this.cellSize);
+	}, '>body')
+	this.addCode(0, index++, function evaluate() {
+	    const word = this.readStringFromStack();
+	    let tempTib = this.tib;
+	    let resumeToIn = this.getToIn();
+	    this.tib = '';
+	    const resumeTib = [word,  tempTib.substring(resumeToIn)];
+	    for(let splitTib of resumeTib) {
+		const result = this.interpret(splitTib);
+		if(result !== "ok" && result !== "compiled") {
+		    this.systemOut.log('Error in evaluate, got: ' + result);
+		    break;
+		}
+	    }
 	})
     }
     getNextWord(endChar) {
