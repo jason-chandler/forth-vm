@@ -288,6 +288,8 @@ const ForthVM = class {
 	this.initCodeWords();
 	this.environment = [];
 	this.skip = 0;
+	this.pictureBuffer = '';
+	this.pictureNumbers = false;
     }
 
     getIp() {
@@ -606,7 +608,11 @@ const ForthVM = class {
 		    }
 		} else if(this.isNumber(word)) {
 		    if(this.getState() === 0) {
-			this.stack.push(parseInt(word, this.getBase()));
+			if(this.pictureNumbers) {
+			    this.stack.dpush(BigInt(parseInt(word, this.getBase())));
+			} else {
+			    this.stack.push(parseInt(word, this.getBase()));
+			}
 		    } else {
 			this.writeHere(this.findWord('LIT').cfa);
 			this.writeHere(parseInt(word, this.getBase()));
@@ -694,6 +700,8 @@ const ForthVM = class {
 	this.rstack.clear();
 	this.controlFlowUnresolved = 0;
 	this.resetTib();
+	this.pictureBuffer = '';
+	this.pictureNumbers = false;
     }
 
     resetTib() {
@@ -952,7 +960,16 @@ const ForthVM = class {
 	}, ';')
 	this.addCode(0, index++, function lit() {
 	    const nextAddr = this.rpop(false, 'jump');
-	    this.stack.push(this.memory.getUint32(nextAddr));
+	    if(this.pictureNumbers) {
+		this.stack.dpush(BigInt(this.memory.getUint32(nextAddr)));
+	    } else {
+		this.stack.push(this.memory.getUint32(nextAddr));
+	    }
+	    this.rpush(nextAddr + this.cellSize, 'jump');
+	})
+	this.addCode(0, index++, function dlit() {
+	    const nextAddr = this.rpop(false, 'jump');
+	    this.stack.dpush(this.memory.getInt64(nextAddr));
 	    this.rpush(nextAddr + this.cellSize, 'jump');
 	})
 	this.addCode(-1, index++, function literal() {
@@ -1935,6 +1952,55 @@ const ForthVM = class {
 		}
 	    }
 	})
+	this.addCode(0, index++, function numstart() {
+	    this.pictureNumbers = true;
+	}, '<#')
+	this.addCode(0, index++, function num() {
+	    const d = this.stack.dpop();
+	    const base = BigInt(this.getBase());
+	    this.pictureBuffer += d % base;
+	    this.stack.dpush(d / base);
+	}, '#')
+	this.addCode(0, index++, function nums() {
+	    let d = BigInt(this.stack.dpop());
+	    const base = BigInt(this.getBase());
+	    let i = 100;
+	    while(d !== BigInt(0) && i > 0) {
+		this.pictureBuffer += Number(d % base);
+		d = d / base;
+		this.stack.dpush(d);
+		i--;
+	    }
+	}, '#S')
+	this.addCode(0, index++, function hold() {
+	    const d = this.stack.dpop();
+	    this.pictureBuffer = String.fromCharCode(Number(d)) + this.pictureBuffer;
+	})
+	this.addCode(0, index++, function holds() {
+	    const str = this.readStringFromStack();
+	    this.pictureBuffer = str + this.pictureBuffer;
+	})
+	this.addCode(0, index++, function sign() {
+	    const d = this.stack.dpop();
+	    if(d < 0) {
+		this.pictureBuffer = '-' + this.pictureBuffer;
+	    }
+	})
+
+	this.addCode(0, index++, function numend() {
+	    this.pictureNumbers = false;
+	    this.writeToStringBuffer(this.pictureBuffer);
+	    this.pictureBuffer = '';
+	}, '#>')
+	this.addCode(0, index++, function sequal() {
+	    const a = this.readStringFromStack();
+	    const b = this.readStringFromStack();
+	    if(a === b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 's=')
     }
     getNextWord(endChar) {
 	let word = '';
