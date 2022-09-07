@@ -236,6 +236,10 @@ class Memory {
     }
 
     setByte(offset, value) {
+	if(offset >= 4820 && offset <= 5020) {
+	    console.log('its 12 oclock ' + offset + ' ' + console.log(String.fromCharCode(value)));
+
+	}
 	this.view.setUint8(offset, value);
     }
 }
@@ -267,18 +271,19 @@ const ForthVM = class {
 	this.cellSize = 4;
 	this.memory = new Memory();
 	this.numCells = this.memory.memorySize / this.cellSize;
-	this.ip = 16;
-	this.dp = 16;
+	this.ip = 24;
+	this.dp = 24;
 	this.stack = new Stack(this, this.memory.memorySize - (603 * this.cellSize));
 	this.rstack = new Stack(this, this.memory.memorySize - (402 * this.cellSize));
 	this.strBufStart = this.memory.memorySize - (1006 * this.cellSize);
 	this.strBufEnd = this.memory.memorySize - (804 * this.cellSize);
 	this.strBufPointer = this.strBufStart;
 	this.tib = '';
-	this.tibCopy = this.memory.memorySize - (20040 * this.cellSize);
+	this.tibCopy = this.memory.memorySize - (22040 * this.cellSize);
+	console.log('tibby boi ' + this.tibCopy);
 	this.stateAddr = 8
 	this.toIn = 1;
-	this.baseAddr = this.memory.memorySize - (1208 * this.cellSize);
+	this.baseAddr = 16;
 	this.memory.setUint32(this.baseAddr, 10);
 	this.latest = 0;
 	this.debugTable = {};
@@ -289,7 +294,6 @@ const ForthVM = class {
 	this.environment = [];
 	this.skip = 0;
 	this.pictureBuffer = '';
-	this.pictureNumbers = false;
     }
 
     getIp() {
@@ -383,11 +387,19 @@ const ForthVM = class {
     }
 
     writeHere(val) {
+	if(this.dp >= 4820 && this.dp <= 5020) {
+	    console.log('writing to 4920' + ' but actually ' + this.dp);
+	    console.log(this.latest);
+	}
 	this.memory.setUint32(this.dp, val);
 	this.offsetDp(this.cellSize);
     }
 
     write(offset, val) {
+	if(this.dp >= 4820 && this.dp <= 5020) {
+	    console.log('writing to 4920' + ' but actually offset' + offset);
+	    console.log(this.latest);
+	}
 	this.memory.setUint32(offset, val);
     }
 
@@ -459,6 +471,8 @@ const ForthVM = class {
     writeToStringBuffer(str, counted) {
 	if((str.length + 1) > this.strBufSpace()) {
 	    if((str.length + 1) > (this.strBufEnd - this.strBufStart)) {
+		console.log(str.length + 1)
+		console.log(this.strBufEnd - this.strBufStart);
 		throw("String too large for buffer!");
 	    }
 	    this.strBufPointer = this.strBufStart;
@@ -560,7 +574,16 @@ const ForthVM = class {
 
     
     getBase() {
+	console.log('base is ' + this.memory.getUint32(this.baseAddr));
 	return this.memory.getUint32(this.baseAddr);
+    }
+
+    toBase(num) {
+	return parseInt(num, this.getBase())
+    }
+
+    fromBase(num) {
+	return 
     }
 
     isNumber(word) {
@@ -608,11 +631,7 @@ const ForthVM = class {
 		    }
 		} else if(this.isNumber(word)) {
 		    if(this.getState() === 0) {
-			if(this.pictureNumbers) {
-			    this.stack.dpush(BigInt(parseInt(word, this.getBase())));
-			} else {
-			    this.stack.push(parseInt(word, this.getBase()));
-			}
+			this.stack.push(parseInt(word, this.getBase()));
 		    } else {
 			this.writeHere(this.findWord('LIT').cfa);
 			this.writeHere(parseInt(word, this.getBase()));
@@ -701,7 +720,6 @@ const ForthVM = class {
 	this.controlFlowUnresolved = 0;
 	this.resetTib();
 	this.pictureBuffer = '';
-	this.pictureNumbers = false;
     }
 
     resetTib() {
@@ -795,6 +813,7 @@ const ForthVM = class {
     }
 
     getXtAndLinkFromAddr(addr) {
+	//console.log('xt and link addr ' + addr);
 	const link = this.memory.getUint32(addr);
 	const xt = Word.getCFA(this, addr);
 	return [xt,link];
@@ -807,10 +826,12 @@ const ForthVM = class {
 	}
 	let tempAddr = this.latest;
 	while(tempAddr !== 0) {
+	    //console.log('checking tempAddr ' + tempAddr);
 	    let check = this.getNameAndLinkFromAddr(tempAddr);
 	    let tempName = check[0];
 	    let tempLink = check[1];
 	    if(String(tempName).toUpperCase() === String(name).toUpperCase()) {
+		console.log('returning tempAddr ' + tempAddr);
 		return tempAddr;
 	    } else {
 		tempAddr = tempLink;
@@ -960,11 +981,7 @@ const ForthVM = class {
 	}, ';')
 	this.addCode(0, index++, function lit() {
 	    const nextAddr = this.rpop(false, 'jump');
-	    if(this.pictureNumbers) {
-		this.stack.dpush(BigInt(this.memory.getUint32(nextAddr)));
-	    } else {
-		this.stack.push(this.memory.getUint32(nextAddr));
-	    }
+	    this.stack.push(this.memory.getUint32(nextAddr));
 	    this.rpush(nextAddr + this.cellSize, 'jump');
 	})
 	this.addCode(0, index++, function dlit() {
@@ -996,7 +1013,9 @@ const ForthVM = class {
 	    this.memory.setUint32(addr, val)
 	}, '!')
 	this.addCode(0, index++, function fetch() {
-	    this.stack.push(this.memory.getUint32(this.stack.pop()));
+	    const a = this.stack.pop();
+	    console.log('fetching addr ' + a);
+	    this.stack.push(this.memory.getUint32(a));
 	}, '@')
 	const COMMA = index;
 	this.addCode(0, index++, function comma() {
@@ -1953,27 +1972,26 @@ const ForthVM = class {
 	    }
 	})
 	this.addCode(0, index++, function numstart() {
-	    this.pictureNumbers = true;
 	}, '<#')
 	this.addCode(0, index++, function num() {
-	    const d = this.stack.dpop();
+	    const d = BigInt(this.stack.pop());
 	    const base = BigInt(this.getBase());
 	    this.pictureBuffer += d % base;
-	    this.stack.dpush(d / base);
+	    this.stack.push(Number(d / base));
 	}, '#')
 	this.addCode(0, index++, function nums() {
-	    let d = BigInt(this.stack.dpop());
+	    let d = BigInt(this.stack.pop());
 	    const base = BigInt(this.getBase());
 	    let i = 100;
 	    while(d !== BigInt(0) && i > 0) {
-		this.pictureBuffer += Number(d % base);
+		this.pictureBuffer += d % base;
 		d = d / base;
-		this.stack.dpush(d);
+		this.stack.push(Number(d));
 		i--;
 	    }
 	}, '#S')
 	this.addCode(0, index++, function hold() {
-	    const d = this.stack.dpop();
+	    const d = this.stack.pop();
 	    this.pictureBuffer = String.fromCharCode(Number(d)) + this.pictureBuffer;
 	})
 	this.addCode(0, index++, function holds() {
@@ -1981,14 +1999,13 @@ const ForthVM = class {
 	    this.pictureBuffer = str + this.pictureBuffer;
 	})
 	this.addCode(0, index++, function sign() {
-	    const d = this.stack.dpop();
+	    const d = BigInt(this.stack.pop());
 	    if(d < 0) {
 		this.pictureBuffer = '-' + this.pictureBuffer;
 	    }
 	})
 
 	this.addCode(0, index++, function numend() {
-	    this.pictureNumbers = false;
 	    this.writeToStringBuffer(this.pictureBuffer);
 	    this.pictureBuffer = '';
 	}, '#>')
@@ -2001,6 +2018,30 @@ const ForthVM = class {
 		this.pushFalse();
 	    }
 	}, 's=')
+	this.addCode(0, index++, function tonumber() {
+	    const a = this.readStringFromStack();
+	    let numAsString = '';
+	    let i = -1;
+	    for(let ch of a) {
+		i++
+		if(i === 0 && (ch === '+' || ch === '-')) {
+		    numAsString += ch;
+		} else if(!isNaN(Number(ch))) {
+		    numAsString += ch;
+		} else {
+		    break;
+		}
+	    }
+	    console.log('number ' + numAsString);
+	    console.log(Number(numAsString));
+	    if(numAsString.trim().length > 0 && !isNaN(Number(numAsString))) {
+		this.push(parseInt(numAsString, this.getBase()));
+	    }
+	    if (a.substr(i).length > 0) {
+		console.log('substring ' + a.substr(i));
+		this.writeToStringBuffer(a.substr(i), false);
+	    }
+	}, '>number')
     }
     getNextWord(endChar) {
 	let word = '';
