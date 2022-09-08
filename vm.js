@@ -574,8 +574,11 @@ const ForthVM = class {
 
     
     getBase() {
-	console.log('base is ' + this.memory.getUint32(this.baseAddr));
-	return this.memory.getUint32(this.baseAddr);
+	const base = this.memory.getUint32(this.baseAddr);
+	const ignoreBase = (base <= 1 || base > 36);
+	console.log('base is ' + base);
+	console.log('ignoreBase is ' + ignoreBase);
+	return ignoreBase ? 10 : base ;
     }
 
     toBase(num) {
@@ -2042,6 +2045,49 @@ const ForthVM = class {
 		this.writeToStringBuffer(a.substr(i), false);
 	    }
 	}, '>number')
+	this.addCode(0, index++, function move() {
+	    const a = this.pop(true);
+	    const dest = this.pop();
+	    const src = this.pop();
+	    if(a > 0) {
+		for(let i = 0; i < a; i++) {
+		    this.memory.setByte(dest + i, this.memory.getByte(src + i));
+		}
+	    }
+	})
+	this.addCode(0, index++, function cmove() {
+	    // TODO: fix propagation as given in Forth 83
+	    const a = this.pop(true);
+	    const dest = this.pop();
+	    const src = this.pop();
+	    if(a > 0) {
+		for(let i = 0; i < a; i++) {
+		    this.memory.setByte(dest + i, this.memory.getByte(src + i));
+		}
+	    }
+	})
+	this.addCode(0, index++, function fill() {
+	    const ch = this.pop();
+	    const len = this.pop(true);
+	    const dest = this.pop();
+	    if(len > 0) {
+		for(let i = 0; i < len; i++) {
+		    this.memory.setByte(dest + i, ch);
+		}
+	    }
+	})
+	this.addCode(0, index++, function emit() {
+	    this.systemOut.log(String(this.pop()).charCodeAt(0));
+	})
+	this.addCode(0, index++, function space() {
+	    this.systemOut.log(' ');
+	})
+	this.addCode(0, index++, function spaces() {
+	    const a = this.pop(true);
+	    for(let i = 0; i < a; i++) {
+		this.systemOut.log(' ');
+	    }
+	})
     }
     getNextWord(endChar) {
 	let word = '';
@@ -2060,5 +2106,4 @@ const ForthVM = class {
 
 //window.ForthVM = ForthVM;
 window.vm = new ForthVM();
-
 
