@@ -578,7 +578,8 @@ const ForthVM = class {
 	const ignoreBase = (base <= 1 || base > 36);
 	console.log('base is ' + base);
 	console.log('ignoreBase is ' + ignoreBase);
-	return ignoreBase ? 10 : base ;
+	console.log('base returned is ' + ignoreBase ? 16 : base);
+	return ignoreBase ? 16 : base ;
     }
 
     toBase(num) {
@@ -904,6 +905,7 @@ const ForthVM = class {
 	    this.stack.push(a);
 	    this.stack.push(c);
 	})
+	const OVER = index;
 	this.addCode(0, index++, function over() {
 	    this.push(this.stack.pick(1));
 	})
@@ -1253,8 +1255,35 @@ const ForthVM = class {
 	this.addCode(0, index++, function j() {
 	    this.stack.push(this.rstack.pick(4));
 	})
+	const DROP = index;
+	this.addCode(0, index++, function drop() {
+	    this.pop();
+	})
+	this.addCode(0, index++, function nip() {
+	    this.callCode(SWAP);
+	    this.callCode(DROP);
+	})
+	this.addCode(0, index++, function tuck() {
+	    this.callCode(SWAP);
+	    this.callCode(OVER);
+	})
 	this.addCode(0, index++, function pick() {
 	    this.push(this.stack.pick(this.pop(false)));
+	})
+	this.addCode(0, index++, function roll() {
+	    const a = this.pop();
+	    if(this.stack.depth() >= a + 1) {
+		for(let i = a; i > 0; i--) {
+		    const lowLoc = this.stack.sp + (this.cellSize * (i))
+		    const highLoc = this.stack.sp + (this.cellSize * (i + 1))
+		    const low = this.memory.getUint32(lowLoc);
+		    const high = this.memory.getUint32(highLoc);
+		    this.memory.setUint32(lowLoc, high);
+		    this.memory.setUint32(highLoc, low);
+		}
+	    } else {
+		this.abort('STACK UNDERFLOW');
+	    }
 	})
 	this.addCode(0, index++, function abort() {
 	    this.abort();
@@ -1300,9 +1329,6 @@ const ForthVM = class {
 		this.callCode(TYPE);
 	    }
 	}, '."')
-	this.addCode(0, index++, function drop() {
-	    this.pop();
-	})
 	this.addCode(0, index++, function zerobranch() {
 	    const brVal = this.stack.pop();
 	    const returnAddr = this.rpop(false, 'jump');
