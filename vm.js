@@ -1069,7 +1069,7 @@ const ForthVM = class {
 	this.addCode(0, index++, function cstore() {
 	    const addr = this.pop();
 	    const val = this.pop()
-	    this.stack.push(this.memory.setByte(addr, val));
+	    this.memory.setByte(addr, val);
 	}, 'c!')
 	this.addCode(0, index++, function rfetch() {
 	    this.push(this.rstack.pick(1));
@@ -2169,7 +2169,7 @@ const ForthVM = class {
 	    }
 	})
 	this.addCode(0, index++, function emit() {
-	    this.systemOut.log(String(this.pop()).charCodeAt(0));
+	    this.systemOut.log(String.fromCharCode(this.pop()));
 	})
 	this.addCode(0, index++, function space() {
 	    this.systemOut.log(' ');
@@ -2178,6 +2178,22 @@ const ForthVM = class {
 	    const a = this.pop(true);
 	    for(let i = 0; i < a; i++) {
 		this.systemOut.log(' ');
+	    }
+	})
+	this.addCode(0, index++, function find() {
+	    this.callCode(DUP);
+	    const name = this.readCountedString();
+	    const found = this.findWord(name);
+	    if(found === 0) {
+		this.push(0);
+	    } else {
+		this.callCode(DROP);
+		this.push(found.cfa);
+		if(found.immediate === -1) {
+		    this.push(1);
+		} else {
+		    this.push(-1);
+		}
 	    }
 	})
     }
