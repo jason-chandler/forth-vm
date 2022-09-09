@@ -602,9 +602,46 @@ const ForthVM = class {
 
     getNextWord() {
 	let word = '';
-	while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
-	    word += this.tib[this.getToIn()];
-	    this.toInInc();
+	if(this.parseChar) {
+	    while(this.getToIn() < this.tib.length && !word.includes(this.parseChar)) {
+		word += this.tib[this.getToIn()];
+		this.toInInc();
+	    }
+	    const blankAndEndOfLine = (this.parseChar === ' ' || this.parseChar === '\n') && this.getToIn() >= this.tib.length
+	    if(word.includes(this.parseChar) || blankAndEndOfLine) {
+		console.log('proceeding with parsed: ' + word);
+		const a = blankAndEndOfLine ? word : word.substr(0, word.indexOf(this.parseChar));
+		const b = blankAndEndOfLine ? '' : word.substr(word.indexOf(this.parseChar) + 1);
+		if(a !== this.parseChar) {
+		    this.parseStr += a;
+		}
+		const resume = this.getToIn() - b.length;
+		this.memory.setUint32(this.toIn, resume);
+		this.parseChar = null;
+		if(this.parseCallback1) {
+		    this.parseCallback1.call();
+		}
+		if(this.parseCallback2) {
+		    this.parseCallback2.call();
+		}
+		this.parseCallback1 = null;
+		this.parseCallback2 = null;
+		word = b;
+		this.toInDec();
+		// ugly trampoline-ish thing
+		while (this.rstack.depth() > 0) {
+		    this.ip = this.rpop(false, 'jump');
+		    this.doCol();
+		}
+	    } else {
+		this.parseStr += word;
+		word = '';
+	    }
+	} else {
+	    while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
+		word += this.tib[this.getToIn()];
+		this.toInInc();
+	    }
 	}
 	return word;
     }
@@ -629,7 +666,7 @@ const ForthVM = class {
 			do {
 			    this.ip = this.rpop(false, 'jump');
 			    this.doCol();
-			} while (this.rstack.depth() > 0);
+			} while (this.rstack.depth() > 0 && !this.parseChar);
 		    } else {
 			this.writeHere(foundWord.cfa);
 		    }
@@ -671,7 +708,6 @@ const ForthVM = class {
 	    }
 	    while(this.getToIn() < len) {
 		let word = this.getNextWord();
-		// console.log('nextWord ' + word);
 		this.toInInc();
 		this.processWord(word);
 		len = this.tib.length;
@@ -912,66 +948,61 @@ const ForthVM = class {
 	const PARSE = index;
 	let counted;
 	const PARSEIMPL = function () {
-	    let parseChar = String.fromCharCode(this.stack.pop());
-	    let str = '';
-	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
-		const nextChar = this.tib[this.getToIn()];
-		str += nextChar;
-		this.toInInc();
-	    }
-	    this.toInInc();
-	    if(counted) {
-		this.writeCountedToStringBuffer(str);
-	    } else {
-		this.writeToStringBuffer(str);
-	    }
+	    this.parseChar = String.fromCharCode(this.stack.pop());
+	    // let parseChar = String.fromCharCode(this.stack.pop());
+	    this.parseStr = '';
+	    this.parseCallback1 = function () {
+		if(this.counted) {
+		    this.writeCountedToStringBuffer(this.parseStr);
+		} else {
+		    this.writeToStringBuffer(this.parseStr);
+		}
+	    }.bind(this,this)
 	}.bind(this, this);
 	this.addCode(0, index++, function parse() {
-	    counted = false;
+	    this.counted = false;
 	    PARSEIMPL();
+	    this.parseCallback2 = null;
 	})
 	const BL = index;
 	this.addCode(0, index++, function bl() {
 	    this.stack.push(32); // space
 	})
 	this.addCode(-1, index++, function lparen() {
-	    let parseChar = String.fromCharCode(41); // right paren
-	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
-		this.toInInc();
-	    }
-	    this.toInInc();
+	    this.parseStr = '';
+	    this.parseChar = String.fromCharCode(41); // right paren
+	    this.parseCallback1 = null;
+	    this.parseCallback2 = null;
 	}, '(')
 	const BACKSLASH = index;
 	this.addCode(-1, index++, function backslash() {
-	    let parseChar = '\n';
-	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
-		this.toInInc();
-	    }
-	    this.toInInc();
+	    this.parseStr = '';
+	    this.parseChar = '\n';
+	    this.parseCallback1 = null;
+	    this.parseCallback2 = null;
 	}, '\\')
 	this.addCode(-1, index++, function backslash() {
 	    this.callCode(BACKSLASH);
 	}, '\\\\')
 	this.addCode(-1, index++, function dot_lparen() {
-	    let parseChar = String.fromCharCode(41); // right paren
-	    let str = '';
-	    while(this.getToIn() < this.tib.length && this.tib[this.getToIn()] !== parseChar) {
-		str += this.tib[this.getToIn()];
-		this.toInInc();
-	    }
-	    this.systemOut.log(str);
-	    this.toInInc();
+	    this.push(41); // right paren
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		this.systemOut.log(this.readStringFromStack());
+	    }.bind(this, this);
 	}, '.(')
 	this.addCode(0, index++, function docol() {
 	    
 	})
 	this.addCode(0, index++, function colon() {
 	    this.clearHidden();
+	    this.setState(1);
 	    this.callCode(BL); // BL
 	    this.callCode(PARSE); // PARSE
-	    const name = this.readStringFromStack();
-	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCOL']), 0, true)
-	    this.setState(1);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCOL']), 0, true)
+	    }.bind(this,this);
 	}, ':')
 	this.addCode(0, index++, function exit() {
 	    this.rpop(false, 'jump');
@@ -1075,33 +1106,41 @@ const ForthVM = class {
 	    this.clearHidden();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
-	    this.offsetDp(this.cellSize);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
+		this.offsetDp(this.cellSize);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function constant() {
 	    const constant = this.pop();
 	    this.clearHidden();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCON']), 0)
-	    this.writeHere(constant);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCON']), 0)
+		this.writeHere(constant);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function tick() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    const found = this.findWordOrAbort(name);
-	    this.push(found.cfa);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.push(found.cfa);
+	    }.bind(this, this);
 	}, '\'')
 	this.addCode(-1, index++, function bracket_tick() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    const found = this.findWordOrAbort(name);
-	    this.writeHere(this.findWordOrAbort('LIT').cfa);
-	    this.writeHere(found.cfa);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.writeHere(this.findWordOrAbort('LIT').cfa);
+		this.writeHere(found.cfa);
+	    }.bind(this, this);
 	}, '[\']')
 	this.addCode(-1, index++, function lbracket() {
 	    this.setState(0);
@@ -1112,15 +1151,19 @@ const ForthVM = class {
 	this.addCode(-1, index++, function bracket_char() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.writeHere(this.findWord('LIT').cfa);
-	    this.writeHere(name.charCodeAt(0));
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.writeHere(this.findWord('LIT').cfa);
+		this.writeHere(name.charCodeAt(0));
+	    }.bind(this, this);
 	}, '[char]')
 	this.addCode(0, index++, function _char() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.push(name.charCodeAt(0));
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.push(name.charCodeAt(0));
+	    }.bind(this, this);
 	}, 'char')
 	this.addCode(0, index++, function char_plus() {
 	    this.push((this.pop() + 1));
@@ -1131,9 +1174,11 @@ const ForthVM = class {
 	this.addCode(-1, index++, function bracket_compile() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    const found = this.findWordOrAbort(name);
-	    this.writeHere(found.cfa);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.writeHere(found.cfa);
+	    }.bind(this, this);
 	}, '[compile]')
 	this.addCode(0, index++, function immediate() {
 	    const latestWord = Word.fromAddress(this, this.latest);
@@ -1291,8 +1336,10 @@ const ForthVM = class {
 	this.addCode(0, index++, function abort_quote() {
 	    this.push(34);
 	    this.callCode(PARSE);
-	    const reason = this.readStringFromStack();
-	    this.abort(reason);
+	    this.parseCallback2 = function () {
+		const reason = this.readStringFromStack();
+		this.abort(reason);
+	    }.bind(this, this);
 	}, 'abort"')
 	this.addCode(0, index++, function read_cstring() {
 	    const a = this.rpop(false, 'jump');
@@ -1305,12 +1352,14 @@ const ForthVM = class {
 	this.addCode(-1, index++, function s_quote() {
 	    this.stack.push(34);
 	    this.callCode(PARSE);
-	    if(this.getState() === 1) {
-		this.writeHere(this.findWord('(S")').cfa);
-		const str = this.readStringFromStack();
-		this.writeCountedStringHere(str);
-		this.alignDp();
-	    }
+	    this.parseCallback2 = function () {
+		if(this.getState() === 1) {
+		    this.writeHere(this.findWord('(S")').cfa);
+		    const str = this.readStringFromStack();
+		    this.writeCountedStringHere(str);
+		    this.alignDp();
+		}
+	    }.bind(this, this);
 	}, 's"')
 	const TYPE = index;
 	this.addCode(0, index++, function type() {
@@ -1319,15 +1368,17 @@ const ForthVM = class {
 	this.addCode(-1, index++, function dot_quote() {
 	    this.stack.push(34);
 	    this.callCode(PARSE);
-	    if(this.getState() === 1) {
-		this.writeHere(this.findWord('(S")').cfa);
-		const str = this.readStringFromStack();
-		this.writeCountedStringHere(str);
-		this.alignDp();
-		this.writeHere(this.findWord('TYPE').cfa);
-	    } else {
-		this.callCode(TYPE);
-	    }
+	    this.parseCallback2 = function () {
+		if(this.getState() === 1) {
+		    this.writeHere(this.findWord('(S")').cfa);
+		    const str = this.readStringFromStack();
+		    this.writeCountedStringHere(str);
+		    this.alignDp();
+		    this.writeHere(this.findWord('TYPE').cfa);
+		} else {
+		    this.callCode(TYPE);
+		}
+	    }.bind(this, this);
 	}, '."')
 	this.addCode(0, index++, function zerobranch() {
 	    const brVal = this.stack.pop();
@@ -1520,8 +1571,10 @@ const ForthVM = class {
 	    this.clearHidden();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function buffer() {
 	    this.alignDp();
@@ -1529,9 +1582,11 @@ const ForthVM = class {
 	    this.clearHidden();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
-	    this.offsetDp(size);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+		this.offsetDp(size);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function cellplus() {
 	    this.push(this.pop(false) + this.cellSize);
@@ -1721,8 +1776,10 @@ const ForthVM = class {
 	    const xt = this.pop();
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const pfa = this.findWordOrAbort(this.readStringFromStack()).pfa;
-	    this.memory.setUint32(pfa, xt);
+	    this.parseCallback2 = function () {
+		const pfa = this.findWordOrAbort(this.readStringFromStack()).pfa;
+		this.memory.setUint32(pfa, xt);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function defer_store() {
 	    const deferred = this.pop();
@@ -1738,32 +1795,35 @@ const ForthVM = class {
 	this.addCode(0, index++, function action_of() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const pfa = this.findWord(this.readStringFromStack()).pfa;
-	    this.push(this.memory.getUint32(pfa));
+	    this.parseCallback2 = function () {
+		const pfa = this.findWord(this.readStringFromStack()).pfa;
+		this.push(this.memory.getUint32(pfa));
+	    }.bind(this, this);
 	}, 'action-of')
 	this.addCode(0, index++, function word() {
-	    counted = true;
 	    PARSEIMPL();
 	})
 	this.addCode(0, index++, function include() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    let tempTib = this.tib;
-	    let resumeToIn = this.getToIn();
-	    this.tib = '';
-	    const fileName = this.readStringFromStack();
-	    return this.loadFile(fileName).then((loadedFile) => {
-		const file = this.filterWeirdSpacing(loadedFile);
-		const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
-		const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
-		for(let splitTib of resumeTib.split('\n')) {
-		    const result = this.interpret(splitTib + ' \n ');
-		    if(result !== "ok" && result !== "compiled") {
-			this.systemOut.log('Error in file read, got: ' + result);
-			break;
+	    this.parseCallback2 = function () {
+		let tempTib = this.tib;
+		let resumeToIn = this.getToIn();
+		this.tib = '';
+		const fileName = this.readStringFromStack();
+		return this.loadFile(fileName).then((loadedFile) => {
+		    const file = this.filterWeirdSpacing(loadedFile);
+		    const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
+		    const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
+		    for(let splitTib of resumeTib.split('\n')) {
+			const result = this.interpret(splitTib + ' \n ');
+			if(result !== "ok" && result !== "compiled") {
+			    this.systemOut.log('Error in file read, got: ' + result);
+			    break;
+			}
 		    }
-		}
-	    })
+		})
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function environmentq() {
 	    const query = this.readStringFromStack();
@@ -1944,8 +2004,8 @@ const ForthVM = class {
 	    this.stack.push(this.memory.getUint32(addr));
 	}, '2@')
 	this.addCode(0, index++, function tworfetch() {
+	    this.push(this.rstack.pick(2));
 	    this.push(this.rstack.pick(1));
-	    this.push(this.rstack.pick(0));
 	}, '2r@')
 	this.addCode(0, index++, function twostore() {
 	    const addr = this.pop();
@@ -1953,14 +2013,18 @@ const ForthVM = class {
 	    this.memory.setUint32(addr + this.cellSize, this.pop());
 	}, '2!')
 	this.addCode(0, index++, function twotor() {
+	    const a = this.rpop(false, 'jump')
 	    this.rpush(this.stack.pick(1));
 	    this.rpush(this.stack.pick(0));
+	    this.rpush(a, 'jump');
 	}, '2>r')
 	this.addCode(0, index++, function tworfrom() {
+	    const c = this.rpop(false, 'jump');
 	    const b = this.rpop();
 	    const a = this.rpop();
 	    this.push(a);
 	    this.push(b);
+	    this.rpush(c, 'jump');
 	}, '2r>')
 	this.addCode(0, index++, function qdup() {
 	    const a = this.pop();
@@ -1976,9 +2040,11 @@ const ForthVM = class {
 	this.addCode(-1, index++, function postpone() {
 	    this.callCode(BL);
 	    this.callCode(PARSE);
-	    const name = this.readStringFromStack();
-	    const found = this.findWordOrAbort(name);
-	    this.writeHere(found.cfa);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.writeHere(found.cfa);
+	    }.bind(this, this);
 	})
 	this.addCode(0, index++, function state() {
 	    this.push(this.stateAddr);
@@ -2114,19 +2180,6 @@ const ForthVM = class {
 		this.systemOut.log(' ');
 	    }
 	})
-    }
-    getNextWord(endChar) {
-	let word = '';
-	while(word === '' && this.getToIn() < this.tib.length) {
-	    while(this.getToIn() < this.tib.length && this.isNotSpace(this.tib[this.getToIn()])) {
-		word += this.tib[this.getToIn()];
-		this.toInInc();
-	    }
-	    if(word === '') {
-		this.toInInc();
-	    }
-	}
-	return word;
     }
 }
 
