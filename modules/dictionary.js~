@@ -1,0 +1,1292 @@
+export class Dictionary {
+
+    initCodeWords() {
+	let index = 0;
+	const SWAP = index;
+	this.addCode(0, index++, function swap() {
+	    let a = this.stack.pop();
+	    let b = this.stack.pop();
+	    this.stack.push(a);
+	    this.stack.push(b);
+	})
+	const DUP = index;
+	this.addCode(0, index++, function dup() {
+	    let a = this.stack.pop();
+	    this.stack.push(a);
+	    this.stack.push(a);
+	})
+	const ROT = index;
+	this.addCode(0, index++, function rot() {
+	    let a = this.stack.pop();
+	    let b = this.stack.pop();
+	    let c = this.stack.pop();
+	    this.stack.push(b);
+	    this.stack.push(a);
+	    this.stack.push(c);
+	})
+	const OVER = index;
+	this.addCode(0, index++, function over() {
+	    this.push(this.stack.pick(1));
+	})
+	const PARSE = index;
+	let counted;
+	const PARSEIMPL = function () {
+	    this.parseChar = String.fromCharCode(this.stack.pop());
+	    // let parseChar = String.fromCharCode(this.stack.pop());
+	    this.parseStr = '';
+	    this.parseCallback1 = function () {
+		if(this.counted) {
+		    this.writeCountedToStringBuffer(this.parseStr);
+		} else {
+		    this.writeToStringBuffer(this.parseStr);
+		}
+	    }.bind(this,this)
+	}.bind(this, this);
+	this.addCode(0, index++, function parse() {
+	    this.counted = false;
+	    PARSEIMPL();
+	    this.parseCallback2 = null;
+	})
+	const BL = index;
+	this.addCode(0, index++, function bl() {
+	    this.stack.push(32); // space
+	})
+	this.addCode(-1, index++, function lparen() {
+	    this.parseStr = '';
+	    this.parseChar = String.fromCharCode(41); // right paren
+	    this.parseCallback1 = null;
+	    this.parseCallback2 = null;
+	}, '(')
+	const BACKSLASH = index;
+	this.addCode(-1, index++, function backslash() {
+	    this.parseStr = '';
+	    this.parseChar = '\n';
+	    this.parseCallback1 = null;
+	    this.parseCallback2 = null;
+	}, '\\')
+	this.addCode(-1, index++, function backslash() {
+	    this.callCode(BACKSLASH);
+	}, '\\\\')
+	this.addCode(-1, index++, function dot_lparen() {
+	    this.push(41); // right paren
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		this.systemOut.log(this.readStringFromStack());
+	    }.bind(this, this);
+	}, '.(')
+	this.addCode(0, index++, function docol() {
+	    
+	})
+	this.addCode(0, index++, function colon() {
+	    this.clearHidden();
+	    this.setState(1);
+	    this.callCode(BL); // BL
+	    this.callCode(PARSE); // PARSE
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCOL']), 0, true)
+	    }.bind(this,this);
+	}, ':')
+	this.addCode(0, index++, function exit() {
+	    this.rpop(false, 'jump');
+	})
+	this.addCode(-1, index++, function semicolon() {
+	    if(this.unresolvedControlFlow()) {
+		this.abort('Control flow word is unresolved');
+	    }
+	    this.writeHere(this.findWord('EXIT').cfa);
+	    this.clearHidden();
+	    this.setState(0);
+	}, ';')
+	this.addCode(0, index++, function lit() {
+	    const nextAddr = this.rpop(false, 'jump');
+	    this.stack.push(this.memory.getUint32(nextAddr));
+	    this.rpush(nextAddr + this.cellSize, 'jump');
+	})
+	this.addCode(0, index++, function dlit() {
+	    const nextAddr = this.rpop(false, 'jump');
+	    this.stack.dpush(this.memory.getInt64(nextAddr));
+	    this.rpush(nextAddr + this.cellSize, 'jump');
+	})
+	this.addCode(-1, index++, function literal() {
+	    const a = this.pop();
+	    this.writeHere(this.findWordOrAbort('LIT').cfa);
+	    this.writeHere(a);
+	})
+	this.addCode(0, index++, function dotS() {
+	    this.stack.print();
+	}, '.s')
+	this.addCode(0, index++, function toR() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpush(this.pop(false));
+	    this.rpush(a, 'jump');
+	}, '>R');
+	this.addCode(0, index++, function Rfrom() {
+	    const a = this.rpop(false, 'jump');
+	    this.push(this.rpop(false));
+	    this.rpush(a, 'jump');
+	}, 'R>');
+	this.addCode(0, index++, function store() {
+	    const addr = this.pop();
+	    const val = this.pop();
+	    this.memory.setUint32(addr, val)
+	}, '!')
+	this.addCode(0, index++, function fetch() {
+	    const a = this.stack.pop();
+	    this.stack.push(this.memory.getUint32(a));
+	}, '@')
+	const COMMA = index;
+	this.addCode(0, index++, function comma() {
+	    if(this.dp % this.cellSize !== 0) {
+		this.abort('Must be aligned to store to cell.');
+	    }
+	    this.writeHere(this.pop(false));
+	}, ',')
+	this.addCode(0, index++, function cfetch() {
+	    this.stack.push(this.memory.getByte(this.stack.pop()));
+	}, 'c@')
+	this.addCode(0, index++, function ccomma() {
+	    this.writeCHere(this.pop());
+	}, 'c,')
+	this.addCode(0, index++, function cstore() {
+	    const addr = this.pop();
+	    const val = this.pop()
+	    this.memory.setByte(addr, val);
+	}, 'c!')
+	this.addCode(0, index++, function rfetch() {
+	    this.push(this.rstack.pick(1));
+	}, 'R@')
+	this.addCode(0, index++, function here() {
+	    this.push(this.dp);
+	})
+	this.addCode(0, index++, function allot() {
+	    this.offsetDp(this.pop());
+	})
+	this.addCode(0, index++, function base() {
+	    this.push(this.baseAddr);
+	})
+	this.addCode(0, index++, function decimal() {
+	    this.memory.setUint32(this.baseAddr, 10);
+	})
+	this.addCode(0, index++, function hex() {
+	    this.memory.setUint32(this.baseAddr, 16);
+	})
+	this.addCode(0, index++, function dovar() {
+	    this.stack.push(this.rpop(false, 'jump'));
+	})
+	this.addCode(0, index++, function docon() {
+	    this.stack.push(this.memory.getUint32(this.rpop(false, 'jump')));
+	})
+	this.addCode(0, index++, function equal() {
+	    if(this.pop(true) === this.pop(true)) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '=')
+	this.addCode(0, index++, function variable() {
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOVAR']), 0)
+		this.offsetDp(this.cellSize);
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function constant() {
+	    const constant = this.pop();
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DOCON']), 0)
+		this.writeHere(constant);
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function tick() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.push(found.cfa);
+	    }.bind(this, this);
+	}, '\'')
+	this.addCode(-1, index++, function bracket_tick() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.writeHere(this.findWordOrAbort('LIT').cfa);
+		this.writeHere(found.cfa);
+	    }.bind(this, this);
+	}, '[\']')
+	this.addCode(-1, index++, function lbracket() {
+	    this.setState(0);
+	}, '[')
+	this.addCode(-1, index++, function rbracket() {
+	    this.setState(1);
+	}, ']')
+	this.addCode(-1, index++, function bracket_char() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.writeHere(this.findWord('LIT').cfa);
+		this.writeHere(name.charCodeAt(0));
+	    }.bind(this, this);
+	}, '[char]')
+	this.addCode(0, index++, function _char() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.push(name.charCodeAt(0));
+	    }.bind(this, this);
+	}, 'char')
+	this.addCode(0, index++, function char_plus() {
+	    this.push((this.pop() + 1));
+	}, 'char+')
+	this.addCode(0, index++, function chars() {
+	    this.push(this.pop());
+	})
+	this.addCode(-1, index++, function bracket_compile() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		this.writeHere(found.cfa);
+	    }.bind(this, this);
+	}, '[compile]')
+	this.addCode(0, index++, function immediate() {
+	    const latestWord = Word.fromAddress(this, this.latest);
+	    this.memory.setInt32(latestWord.immediateAddress, -1);
+	})
+	this.addCode(0, index++, function execute() {
+	    const a = this.rpopNested(false, 'jump');
+	    this.rpush(this.pop(), 'jump');
+	    this.rpushNested(a, 'jump');
+	})
+	this.addCode(0, index++, function compile_comma() {
+	    const xt = this.stack.pop();
+	    const found = this.findByXtOrAbort(xt);
+	    this.writeHere(xt);
+	}, 'compile,')
+	this.addCode(0, index++, function d() {
+	    this.systemOut.log(this.stack.pop(true).toString(this.getBase()));
+	}, '.')
+	this.addCode(0, index++, function plus() {
+	    this.stack.push(this.stack.pop(true) + this.stack.pop());
+	}, '+')
+	this.addCode(0, index++, function minus() {
+	    const b = this.stack.pop();
+	    this.stack.push(this.stack.pop(true) - b);
+	}, '-')
+	this.addCode(0, index++, function star() {
+	    this.stack.push(this.stack.pop(true) * this.stack.pop());
+	}, '*')
+	this.addCode(0, index++, function slash() {
+	    const b = this.stack.pop(true);
+	    this.stack.push(Math.floor(this.stack.pop(true) / b));
+	}, '/')
+	this.addCode(0, index++, function mod() {
+	    const b = this.stack.pop(true);
+	    this.stack.push(this.stack.pop(true) % b);
+	})
+	this.addCode(0, index++, function slashmod() {
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    this.stack.push(a % b);
+	    this.stack.push(Math.floor(a / b));
+	}, '/mod')
+	this.addCode(0, index++, function starslashmod() {
+	    const c = this.stack.pop(true);
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    this.stack.push(Number(BigInt(a * b) % BigInt(c)));
+	    this.stack.push(Number(BigInt(a * b) / BigInt(c)));
+	}, '*/mod')
+
+	this.addCode(0, index++, function um_slashmod() {
+	    const b = BigInt(this.stack.pop());
+	    const a = BigInt(this.stack.dpop());
+	    this.stack.push(Number(a % b));
+	    this.stack.push(Math.floor(Number(a / b)));
+	}, 'um/mod')
+	this.addCode(0, index++, function sm_slashrem() {
+	    const b = BigInt(this.stack.pop(true));
+	    const a = BigInt(this.stack.dpop(true));
+	    this.stack.push(Number(a % b));
+	    this.stack.push(Number(a / b));
+	}, 'sm/rem')
+	this.addCode(0, index++, function fm_slashmod() {
+	    // TODO: real floored division for doubleInts
+	    // JavaScript only implements symmetric for Int64's
+	    const b = this.stack.pop(true);
+	    const a = Number(this.stack.dpop(true));
+	    this.stack.push(a % b);
+	    Math.floor(this.stack.push(a / b));
+	}, 'fm/mod')
+	this.addCode(0, index++, function less() {
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    if(a < b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '<')
+	this.addCode(0, index++, function greater() {
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    if(a > b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '>')
+	this.addCode(0, index++, function lesseq() {
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    if(a <= b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '<=')
+	this.addCode(0, index++, function greateq() {
+	    const b = this.stack.pop(true);
+	    const a = this.stack.pop(true);
+	    if(a >= b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '>=')
+	this.addCode(0, index++, function abs() {
+	    this.push(Math.abs(this.pop(true)));
+	})
+	this.addCode(0, index++, function align() {
+	    this.alignDp();
+	})
+	this.addCode(0, index++, function aligned() {
+	    this.push(this.align());
+	})
+	this.addCode(0, index++, function i() {
+	    this.stack.push(this.rstack.pick(2));
+	})
+	this.addCode(0, index++, function j() {
+	    this.stack.push(this.rstack.pick(4));
+	})
+	const DROP = index;
+	this.addCode(0, index++, function drop() {
+	    this.pop();
+	})
+	this.addCode(0, index++, function nip() {
+	    this.callCode(SWAP);
+	    this.callCode(DROP);
+	})
+	this.addCode(0, index++, function tuck() {
+	    this.callCode(SWAP);
+	    this.callCode(OVER);
+	})
+	this.addCode(0, index++, function pick() {
+	    this.push(this.stack.pick(this.pop(false)));
+	})
+	this.addCode(0, index++, function roll() {
+	    const a = this.pop();
+	    if(this.stack.depth() >= a + 1) {
+		for(let i = a; i > 0; i--) {
+		    const lowLoc = this.stack.sp + (this.cellSize * (i))
+		    const highLoc = this.stack.sp + (this.cellSize * (i + 1))
+		    const low = this.memory.getUint32(lowLoc);
+		    const high = this.memory.getUint32(highLoc);
+		    this.memory.setUint32(lowLoc, high);
+		    this.memory.setUint32(highLoc, low);
+		}
+	    } else {
+		this.abort('STACK UNDERFLOW');
+	    }
+	})
+	this.addCode(0, index++, function abort() {
+	    this.abort();
+	})
+	this.addCode(0, index++, function abort_quote() {
+	    this.push(34);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const reason = this.readStringFromStack();
+		this.abort(reason);
+	    }.bind(this, this);
+	}, 'abort"')
+	this.addCode(0, index++, function read_cstring() {
+	    const a = this.rpop(false, 'jump');
+	    const len = this.memory.getByte(a);
+	    this.push(a + 1);
+	    this.push(len);
+	    this.rpush(this.align(a + len), 'jump');
+	}, '(s")')
+	const SQUOTE = index;
+	this.addCode(-1, index++, function s_quote() {
+	    this.stack.push(34);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		if(this.getState() === 1) {
+		    this.writeHere(this.findWord('(S")').cfa);
+		    const str = this.readStringFromStack();
+		    this.writeCountedStringHere(str);
+		    this.alignDp();
+		}
+	    }.bind(this, this);
+	}, 's"')
+	const TYPE = index;
+	this.addCode(0, index++, function type() {
+	    this.systemOut.log(this.readStringFromStack());
+	})
+	this.addCode(-1, index++, function dot_quote() {
+	    this.stack.push(34);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		if(this.getState() === 1) {
+		    this.writeHere(this.findWord('(S")').cfa);
+		    const str = this.readStringFromStack();
+		    this.writeCountedStringHere(str);
+		    this.alignDp();
+		    this.writeHere(this.findWord('TYPE').cfa);
+		} else {
+		    this.callCode(TYPE);
+		}
+	    }.bind(this, this);
+	}, '."')
+	this.addCode(0, index++, function zerobranch() {
+	    const brVal = this.stack.pop();
+	    const returnAddr = this.rpop(false, 'jump');
+	    const branchAddr = this.memory.getUint32(returnAddr);
+	    
+	    if(brVal === 0) {
+		this.rpush(branchAddr, 'jump');
+	    } else {
+		this.rpush(returnAddr + this.cellSize, 'jump');
+	    }
+	}, '0branch')
+	this.addCode(0, index++, function branch() {
+	    const returnAddr = this.rpop(false, 'jump');
+	    const branchAddr = this.memory.getUint32(returnAddr);
+	    this.rpush(branchAddr, 'jump');
+	})
+	this.addCode(0, index++, function run_do() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpush(this.stack.pop(), 'loop-sys-index');
+	    this.rpush(this.stack.pop(), 'loop-sys-limit');
+	    this.rpush(a, 'jump');
+	}, '(do)')
+	this.addCode(-1, index++, function _do() {
+	    if(this.getState() === 1) {
+		this.writeHere(this.findWord('(DO)').cfa);
+		this.stack.push(this.dp, 'do-sys');
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'DO\' in interpret mode');
+	    }
+	}, 'do')
+	this.addCode(-1, index++, function _case() {
+	    if(this.getState() === 1) {
+		// TODO: look up a better implementation of this
+		this.writeHere(this.findWord('LIT').cfa);
+		this.push(this.dp, 'case-sys');
+		this.writeHere(0);
+		this.writeHere(this.findWord('DROP').cfa);
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'CASE\' in interpret mode');
+	    }
+	}, 'case')
+	this.addCode(-1, index++, function _of() {
+	    if(this.getState() === 1) {
+		this.writeHere(this.findWord('LIT').cfa);
+		this.writeHere(1);
+		this.writeHere(this.findWord('PICK').cfa);
+		this.writeHere(this.findWord('=').cfa);
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.push(this.dp, 'of-sys');
+		this.writeHere(0);
+		this.writeHere(this.findWord('DROP').cfa);
+		this.controlFlowUnresolved -= 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'OF\' in interpret mode');
+			 }
+	}, 'of')
+	this.addCode(-1, index++, function endof() {
+	    if(this.getState() === 1) {
+		const endOf = this.dp;
+		const _of = this.pop(false, 'of-sys');
+		const _case = this.pop(false, 'case-sys');
+		// make sure the previous endof jumps to before the branch
+		// so it skips to the end
+		this.memory.setUint32(_case, endOf);
+		this.writeHere(this.findWord('BRANCH').cfa);
+		this.push(this.dp, 'case-sys');
+		this.writeHere(0);
+		// make sure the previous OF jumps after the branch to check
+		// if the next case is true
+		this.memory.setUint32(_of, this.dp);
+		this.controlFlowUnresolved += 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'ENDOF\' in interpret mode');
+			 }
+	}, 'endof')
+	this.addCode(-1, index++, function endcase() {
+	    if(this.getState() === 1) {
+		const _case = this.pop(false, 'case-sys');
+		this.writeHere(this.findWord('DROP').cfa);
+		this.memory.setUint32(_case, this.dp);
+		this.controlFlowUnresolved += 1;
+			 } else {
+			     this.abort('Cannot use control flow construct \'ENDCASE\' in interpret mode');
+			 }
+	}, 'endcase')
+	this.addCode(0, index++, function runLoop() {
+	    let nextAddr = this.rpop(false, 'jump');
+	    const signed = this.peekIndices();
+	    let limit = this.rpop(signed, 'loop-sys-limit');
+	    let index = this.rpop(signed, 'loop-sys-index') + 1;
+	    if(limit === index) {
+		this.pushTrue();
+	    } else {
+		this.rpush(index, 'loop-sys-index');
+		this.rpush(limit, 'loop-sys-limit');
+		this.pushFalse();
+	    }
+	    this.rpush(nextAddr, 'jump');
+	}, '(loop)')
+	this.addCode(0, index++, function runPlusLoop() {
+	    let nextAddr = this.rpop(false, 'jump');
+	    const signed = this.peekPlusIndices();
+	    let limit = this.rpop(signed, 'loop-sys-limit');
+	    let index = this.rpop(signed, 'loop-sys-index') + this.pop(signed);
+	    if((limit - 1) === index) {
+		this.pushTrue();
+	    } else {
+		this.rpush(index, 'loop-sys-index');
+		this.rpush(limit, 'loop-sys-limit');
+		this.pushFalse();
+	    }
+	    this.rpush(nextAddr, 'jump');
+	}, '(+loop)')
+	let plus;
+	const loop = function () {
+	    if(this.getState() === 1) {
+		if(this.unresolvedControlFlow()) {
+		    const loopWord = plus ? '(+LOOP)' : '(LOOP)';
+		    this.writeHere(this.findWord(loopWord).cfa);
+		    this.writeHere(this.findWord('0BRANCH').cfa);
+		    let leaveStack = [];
+		    while(this.stack.peekControl() === 'leave-sys') {
+			const leaveSys = this.stack.pop(false, 'leave-sys');
+			leaveStack.push(leaveSys);
+		    }
+		    const doSys = this.stack.pop(false, 'do-sys');
+		    this.writeHere(doSys);
+		    while(leaveStack.length !== 0) {
+			const leaveLoc = leaveStack.pop();
+			this.memory.setUint32(leaveLoc, this.dp);
+		    }
+		    this.controlFlowUnresolved++;
+		} else {
+		    this.abort('Cannot use LOOP without matching DO');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'LOOP\' in interpret mode');
+	    }
+	}.bind(this, this);
+	this.addCode(-1, index++, function loop1 () {
+	    plus = false;
+	    loop();
+	}, 'loop');
+	this.addCode(-1, index++, function loop2 () {
+	    plus = true;
+	    loop();
+	}, '+loop');
+	this.addCode(0, index++, function toIn() {
+	    this.push(this.toIn);
+	}, '>in');
+	this.addCode(0, index++, function do_does() {
+	    const createdAddr = this.rpop(false, 'jump');
+	    const cfa2 = createdAddr - (2 * this.cellSize);
+	    const code2 = this.memory.getUint32(cfa2);
+	    this.push(createdAddr);
+	    if(code2 !== 0) {
+		this.rpush(code2, 'jump');
+	    }
+	}, 'dodoes')
+	this.addCode(0, index++, function run_does() {
+	    let latestWord = Word.fromAddress(this, this.latest);
+	    const lastDefinitionCreated = latestWord.codeWord === Word.getCFA(this, this.debugTable['DODOES']);
+	    if(lastDefinitionCreated) {
+		const returnAddr = this.rpop(false, 'jump');
+		this.memory.setUint32(latestWord.cfa2, returnAddr);
+	    } else {
+		this.abort('Cannot use DOES without CREATE');
+	    }
+	}, '(does)')
+	const DOES = index;
+	this.addCode(-1, index++, function does() {
+	    if(this.getState() === 0) {
+		let latestWord = Word.fromAddress(this, this.latest);
+		const lastDefinitionCreated = latestWord.codeWord === Word.getCFA(this, this.debugTable['DODOES']);
+		if(lastDefinitionCreated) {
+		    this.memory.setUint32(latestWord.cfa2, this.dp);
+		    this.setState(1);
+		} else {
+		    this.abort('Cannot use DOES without CREATE');
+		}
+	    } else {
+		this.writeHere(Word.getCFA(this, this.debugTable['(DOES)']));
+	    }
+	}, 'does>')
+	const CREATE = index;
+	this.addCode(0, index++, function create() {
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function buffer() {
+	    this.alignDp();
+	    const size = this.pop();
+	    this.clearHidden();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		this.addWord(name, 0, Word.getCFA(this, this.debugTable['DODOES']), 0);
+		this.offsetDp(size);
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function cellplus() {
+	    this.push(this.pop(false) + this.cellSize);
+	}, 'cell+')
+	this.addCode(0, index++, function cells() {
+	    this.push(this.pop(false) * this.cellSize);
+	})
+	this.addCode(-1, index++, function again() {
+	    if(this.getState() === 1) {
+		this.writeHere(Word.getCFA(this, this.debugTable['BRANCH']));
+		this.writeHere(this.pop(false, 'dest'));
+		this.controlFlowUnresolved += 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'AGAIN\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function begin() {
+	    if(this.getState() === 1) {
+		this.stack.push(this.dp, 'dest');
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'BEGIN\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function repeat() {
+	    if(this.getState() === 1) {
+		this.writeHere(Word.getCFA(this, this.debugTable['BRANCH']));
+		this.writeHere(this.pop(false, 'dest'));
+		this.memory.setUint32(this.pop(false, 'orig'), this.dp);
+		this.controlFlowUnresolved += 2;
+	    } else {
+		this.abort('Cannot use control flow construct \'REPEAT\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function until() {
+	    if(this.getState() === 1) {
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.writeHere(this.pop(false, 'dest'));
+		this.controlFlowUnresolved += 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'UNTIL\' in interpret mode');
+	    }
+	})
+	this.addCode(-1, index++, function _while() {
+	    if(this.getState() === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('0BRANCH').cfa);
+		    const dest = this.pop(false, 'dest');
+		    this.push(this.dp, 'orig');
+		    this.push(dest, 'dest');
+		    this.writeHere(0);
+		    this.controlFlowUnresolved -= 1;
+		} else {
+		    this.abort('Cannot use while without matching begin');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'WHILE\' in interpret mode');
+	    }
+	}, 'while')
+	this.addCode(0, index++, function oneplus() {
+	    this.push(1 + this.pop(true));
+	}, '1+')
+	this.addCode(0, index++, function oneminus() {
+	    this.push(this.pop(true) - 1);
+	}, '1-')
+	this.addCode(0, index++, function run_leave() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpop(true, 'loop-sys-limit');
+	    this.rpop(true, 'loop-sys-index');
+	    const branchAddr = this.memory.getUint32(a);
+	    this.rpush(branchAddr, 'jump');
+	}, '(leave)')
+	this.addCode(-1, index++, function leave() {
+	    if(this.getState() === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('(LEAVE)').cfa);
+		    this.push(this.dp, 'leave-sys');
+		    this.writeHere(0);
+		} else {
+		    this.abort('Cannot use leave outside of control flow construct');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'LEAVE\' in interpret mode');
+	    }
+	})
+	this.addCode(0, index++, function unloop() {
+	    const a = this.rpop(false, 'jump');
+	    this.rpop(false, 'loop-sys-limit');
+	    this.rpop(false, 'loop-sys-index');
+	    this.rpush(a, 'jump');
+	})
+	this.addCode(-1, index++, function _if() {
+	    if(this.getState() === 1) {
+		this.writeHere(this.findWord('0BRANCH').cfa);
+		this.push(this.dp, 'orig');
+		this.writeHere(0);
+		this.controlFlowUnresolved -= 1;
+	    } else {
+		this.abort('Cannot use control flow construct \'IF\' in interpret mode');
+	    }
+	}, 'if')
+	this.addCode(-1, index++, function _else() {
+	    if(this.getState() === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.writeHere(this.findWord('BRANCH').cfa);		    
+		    let orig2 = this.dp;
+		    this.writeHere(0);
+		    this.memory.setUint32(this.stack.pop(false, 'orig', true), this.dp);
+		    this.push(orig2, 'orig');
+		} else {
+		    this.abort('Cannot use else without matching if');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'ELSE\' in interpret mode');
+	    }
+	}, 'else')
+	this.addCode(-1, index++, function then() {
+	    if(this.getState() === 1) {
+		if(this.unresolvedControlFlow()) {
+		    this.memory.setUint32(this.stack.pop(false, 'orig', true), this.dp);
+		    this.controlFlowUnresolved++;
+		} else {
+		    this.abort('Cannot use then without matching if');
+		}
+	    } else {
+		this.abort('Cannot use control flow construct \'THEN\' in interpret mode');
+	    }
+	})
+	this.addCode(0, index++, function count() {
+	    const loc = this.stack.pop();
+	    const len = this.memory.getByte(loc);
+	    this.push(loc + 1);
+	    this.push(len);
+	})
+	this.addCode(0, index++, function cr() {
+	    this.systemOut.log('\n');
+	})
+	this.addCode(0, index++, function colon_noname() {
+	    this.clearHidden();
+	    const noname_cfa = this.addWord('', 0, Word.getCFA(this, this.debugTable['DOCOL']), 0);
+	    this.setState(1);
+	    this.push(noname_cfa);
+	}, ':noname')
+	this.addCode(-1, index++, function recurse() {
+	    if(this.hiddenWord) {
+		this.writeHere(this.hiddenWord.cfa);
+	    } else {
+		this.writeHere(this.getXtAndLinkFromAddr(this.latest)[0]);
+	    }
+	})
+	this.addCode(0, index++,  function dump() {
+	    const limit = this.pop();
+	    const addr = this.pop();
+	    let str = '';
+	    for(let i = 0; i < limit; i++) {
+		str += this.memory.getByte(addr + i);
+		str += ' ';
+	    }
+	    this.systemOut.log(str);
+	})
+	this.addCode(0, index++,  function defdump() {
+	    const limit = this.pop();
+	    const cfa = this.pop();
+	    let str = '';
+	    for(let i = 0; i < limit; i+= this.cellSize) {
+		const defcfa = this.memory.getUint32(cfa + i);
+		const addr = this.findByXt(defcfa);
+		if(addr !== 0)  {
+		    str += Word.fromAddress(this, addr).name;
+		} else {
+		    str += defcfa;
+		}
+		str += ' ';
+	    }
+	    this.systemOut.log(str);
+	})
+	this.addCode(0, index++, function defer() {
+	    this.callCode(CREATE);
+	    this.writeHere(this.findWord('ABORT').cfa);
+	    this.callCode(DOES);
+	    this.writeHere(this.findWord('@').cfa);
+	    this.writeHere(this.findWord('EXECUTE').cfa);
+	    this.writeHere(this.findWord('EXIT').cfa);
+	    this.setState(0);
+	})
+	this.addCode(0, index++, function is() {
+	    const xt = this.pop();
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const pfa = this.findWordOrAbort(this.readStringFromStack()).pfa;
+		this.memory.setUint32(pfa, xt);
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function defer_store() {
+	    const deferred = this.pop();
+	    const xt = this.pop();
+	    const found = this.findByXtOrAbort(deferred);
+	    this.memory.setUint32(deferred + this.cellSize, xt);
+	}, 'defer!')
+	this.addCode(0, index++, function defer_fetch() {
+	    const deferred = this.pop();
+	    const found = this.findByXtOrAbort(deferred);
+	    this.push(this.memory.getUint32(deferred + this.cellSize));
+	}, 'defer@')
+	this.addCode(0, index++, function action_of() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const pfa = this.findWord(this.readStringFromStack()).pfa;
+		this.push(this.memory.getUint32(pfa));
+	    }.bind(this, this);
+	}, 'action-of')
+	this.addCode(0, index++, function word() {
+	    PARSEIMPL();
+	})
+	this.addCode(0, index++, function include() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		let tempTib = this.tib;
+		let resumeToIn = this.getToIn();
+		this.tib = '';
+		const fileName = this.readStringFromStack();
+		return this.loadFile(fileName).then((loadedFile) => {
+		    const file = this.filterWeirdSpacing(loadedFile);
+		    const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
+		    const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
+		    for(let splitTib of resumeTib.split('\n')) {
+			const result = this.interpret(splitTib + ' \n ');
+			if(result !== "ok" && result !== "compiled") {
+			    this.systemOut.log('Error in file read, got: ' + result);
+			    break;
+			}
+		    }
+		})
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function environmentq() {
+	    const query = this.readStringFromStack();
+	    if(this.environment.includes(query.toUpperCase())) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'environment?')
+	this.addCode(-1, index++, function bracketIf() {
+	    if(this.skip > 0 || this.pop() === 0) {
+		this.skip++;
+	    }
+	}, '[if]')
+	this.addCode(-1, index++, function bracketElse() {
+	    if(this.skip === 1) {
+		this.skip--;
+	    }
+	}, '[else]')
+	this.addCode(-1, index++, function bracketThen() {
+	    if(this.skip > 0) {
+		this.skip--;
+	    }
+	}, '[then]')
+	this.addCode(0, index++, function _true() {
+	    this.pushTrue();
+	}, 'true')
+	this.addCode(0, index++, function _false() {
+	    this.pushFalse();
+	}, 'false')
+	this.addCode(0, index++, function depth() {
+	    this.push(this.stack.depth());
+	})
+	this.addCode(0, index++, function source() {
+	    this.push(this.tibCopy);
+	    this.push(this.tib.length);
+	})
+	this.addCode(0, index++, function ne() {
+	    if(this.pop() !== this.pop()) {
+		this.pushTrue();
+	    }
+	    else {
+		this.pushFalse();
+	    }
+	}, '<>')
+	this.addCode(0, index++, function or() {
+	    this.push(this.pop() | this.pop());
+	})
+	this.addCode(0, index++, function xor() {
+	    this.push(this.pop() ^ this.pop());
+	})
+	this.addCode(0, index++, function lshift() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    this.push(a << b);
+	})
+	this.addCode(0, index++, function rshift() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    this.push(a >>> b);
+	})
+	this.addCode(0, index++, function plus_store() {
+	    const a = this.pop();
+	    this.memory.setUint32(a, (this.memory.getUint32(a) + this.pop()));
+	}, '+!')
+	this.addCode(0, index++, function qdup() {
+	    const a = this.pop();
+	    this.push(a);
+	    if(a !== 0) {
+		this.push(a);
+	    }
+	}, '?dup')
+	this.addCode(0, index++, function negate() {
+	    this.push(0 - this.pop());
+	})
+	this.addCode(0, index++, function invert() {
+	    this.push(~this.pop(true));
+	})
+	this.addCode(0, index++, function and() {
+	    this.push(this.pop() & this.pop());
+	})
+	this.addCode(0, index++, function star_slash() {
+	    const c = this.pop(true);
+	    const b = this.pop(true);
+	    const a = this.pop(true);
+	    this.push((a * b) / c);
+	}, '*/')
+	this.addCode(0, index++, function mtimes() {
+	    this.stack.dpush(this.pop(true) * this.pop(true));
+	}, 'm*')
+	this.addCode(0, index++, function umtimes() {
+	    this.stack.dpush(this.pop() * this.pop());
+	}, 'um*')
+	this.addCode(0, index++, function twotimes() {
+	    this.push(this.pop(true) << 1);
+	}, '2*')
+	this.addCode(0, index++, function twodiv() {
+	    this.push(this.pop(true) >> 1);
+	}, '2/')
+	this.addCode(0, index++, function zeroeq() {
+	    if(this.pop() === 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0=')
+	this.addCode(0, index++, function greater_zero() {
+	    if(this.pop(true) > 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0>')
+	this.addCode(0, index++, function less_zero() {
+	    if(this.pop(true) < 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0<')
+	this.addCode(0, index++, function neq_zero() {
+	    if(this.pop(true) !== 0) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, '0<>')
+	this.addCode(0, index++, function unsigned_dot() {
+	    this.systemOut.log(this.stack.pop().toString(this.getBase()));
+	}, 'u.')
+	this.addCode(0, index++, function unsigned_less() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    if(a < b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'u<')
+	this.addCode(0, index++, function unsigned_greater() {
+	    const b = this.pop();
+	    const a = this.pop();
+	    if(a > b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 'u>')
+	this.addCode(0, index++, function min() {
+	    this.push(Math.min(this.pop(true), this.pop(true)));
+	})
+	this.addCode(0, index++, function max() {
+	    this.push(Math.max(this.pop(true), this.pop(true)));
+	})
+	this.addCode(0, index++, function twodrop() {
+	    this.pop();
+	    this.pop();
+	}, '2drop')
+	this.addCode(0, index++, function twodup() {
+	    this.push(this.stack.pick(1));
+	    this.push(this.stack.pick(1));
+	}, '2dup')
+	this.addCode(0, index++, function twoover() {
+	    this.push(this.stack.pick(3));
+	    this.push(this.stack.pick(3));
+	}, '2over')
+	this.addCode(0, index++, function twoswap() {
+	    this.rpush(this.pop());
+	    this.callCode(ROT);
+	    this.callCode(ROT);
+	    this.push(this.rpop());
+	    this.callCode(ROT);
+	    this.callCode(ROT);
+	}, '2swap')
+	this.addCode(0, index++, function twofetch() {
+	    const addr = this.stack.pop()
+	    this.stack.push(this.memory.getUint32(addr + this.cellSize));
+	    this.stack.push(this.memory.getUint32(addr));
+	}, '2@')
+	this.addCode(0, index++, function tworfetch() {
+	    this.push(this.rstack.pick(2));
+	    this.push(this.rstack.pick(1));
+	}, '2r@')
+	this.addCode(0, index++, function twostore() {
+	    const addr = this.pop();
+	    this.memory.setUint32(addr, this.pop());
+	    this.memory.setUint32(addr + this.cellSize, this.pop());
+	}, '2!')
+	this.addCode(0, index++, function twotor() {
+	    const a = this.rpop(false, 'jump')
+	    this.rpush(this.stack.pick(1));
+	    this.rpush(this.stack.pick(0));
+	    this.rpush(a, 'jump');
+	}, '2>r')
+	this.addCode(0, index++, function tworfrom() {
+	    const c = this.rpop(false, 'jump');
+	    const b = this.rpop();
+	    const a = this.rpop();
+	    this.push(a);
+	    this.push(b);
+	    this.rpush(c, 'jump');
+	}, '2r>')
+	this.addCode(0, index++, function qdup() {
+	    const a = this.pop();
+	    if(a !== 0) {
+		this.push(a);
+	    }
+	    this.push(a);
+	}, '?dup')
+	this.addCode(0, index++, function s_to_d() {
+	    const a = this.pop(true);
+	    this.stack.dpush(a);
+	}, 's>d')
+	const COMPILEC = index; 
+	this.addCode(0, index++, function compile_comma() {
+	    this.writeHere(this.pop());
+	}, 'compile,')
+	this.addCode(-1, index++, function postpone() {
+	    this.callCode(BL);
+	    this.callCode(PARSE);
+	    this.parseCallback2 = function () {
+		const name = this.readStringFromStack();
+		const found = this.findWordOrAbort(name);
+		if(found.immediate) {
+		    this.writeHere(found.cfa);
+		} else {
+		    this.writeHere(this.findWord('LIT').cfa);
+		    this.writeHere(found.cfa);
+		    this.writeHere(this.findWord('COMPILE,').cfa);
+		}
+	    }.bind(this, this);
+	})
+	this.addCode(0, index++, function state() {
+	    this.push(this.stateAddr);
+	})
+	this.addCode(0, index++, function tobody() {
+	    this.push(this.pop() + this.cellSize);
+	}, '>body')
+	this.addCode(0, index++, function evaluate() {
+	    const word = this.readStringFromStack();
+	    let tempTib = this.tib;
+	    let resumeToIn = this.getToIn();
+	    this.tib = '';
+	    const resumeTib = [word,  tempTib.substring(resumeToIn)];
+	    for(let splitTib of resumeTib) {
+		const result = this.interpret(splitTib);
+		if(result !== "ok" && result !== "compiled") {
+		    this.systemOut.log('Error in evaluate, got: ' + result);
+		    break;
+		}
+	    }
+	})
+	this.addCode(0, index++, function numstart() {
+	}, '<#')
+	this.addCode(0, index++, function num() {
+	    const d = BigInt(this.stack.pop());
+	    const base = BigInt(this.getBase());
+	    this.pictureBuffer += d % base;
+	    this.stack.push(Number(d / base));
+	}, '#')
+	this.addCode(0, index++, function nums() {
+	    let d = BigInt(this.stack.pop());
+	    const base = BigInt(this.getBase());
+	    let i = 100;
+	    while(d !== BigInt(0) && i > 0) {
+		this.pictureBuffer += d % base;
+		d = d / base;
+		this.stack.push(Number(d));
+		i--;
+	    }
+	}, '#S')
+	this.addCode(0, index++, function hold() {
+	    const d = this.stack.pop();
+	    this.pictureBuffer = String.fromCharCode(Number(d)) + this.pictureBuffer;
+	})
+	this.addCode(0, index++, function holds() {
+	    const str = this.readStringFromStack();
+	    this.pictureBuffer = str + this.pictureBuffer;
+	})
+	this.addCode(0, index++, function sign() {
+	    const d = BigInt(this.stack.pop());
+	    if(d < 0) {
+		this.pictureBuffer = '-' + this.pictureBuffer;
+	    }
+	})
+
+	this.addCode(0, index++, function numend() {
+	    this.writeToStringBuffer(this.pictureBuffer);
+	    this.pictureBuffer = '';
+	}, '#>')
+	this.addCode(0, index++, function sequal() {
+	    const a = this.readStringFromStack();
+	    const b = this.readStringFromStack();
+	    if(a === b) {
+		this.pushTrue();
+	    } else {
+		this.pushFalse();
+	    }
+	}, 's=')
+	this.addCode(0, index++, function tonumber() {
+	    const a = this.readStringFromStack();
+	    let numAsString = '';
+	    let i = -1;
+	    for(let ch of a) {
+		i++
+		if(i === 0 && (ch === '+' || ch === '-')) {
+		    numAsString += ch;
+		} else if(!isNaN(Number(ch))) {
+		    numAsString += ch;
+		} else {
+		    break;
+		}
+	    }
+	    //console.log('number ' + numAsString);
+	    //console.log(Number(numAsString));
+	    if(numAsString.trim().length > 0 && !isNaN(Number(numAsString))) {
+		this.push(parseInt(numAsString, this.getBase()));
+	    }
+	    if (a.substr(i).length > 0) {
+		//console.log('substring ' + a.substr(i));
+		this.writeToStringBuffer(a.substr(i), false);
+	    }
+	}, '>number')
+	this.addCode(0, index++, function move() {
+	    const a = this.pop(true);
+	    const dest = this.pop();
+	    const src = this.pop();
+	    if(a > 0) {
+		for(let i = 0; i < a; i++) {
+		    this.memory.setByte(dest + i, this.memory.getByte(src + i));
+		}
+	    }
+	})
+	this.addCode(0, index++, function cmove() {
+	    // TODO: fix propagation as given in Forth 83
+	    const a = this.pop(true);
+	    const dest = this.pop();
+	    const src = this.pop();
+	    if(a > 0) {
+		for(let i = 0; i < a; i++) {
+		    this.memory.setByte(dest + i, this.memory.getByte(src + i));
+		}
+	    }
+	})
+	this.addCode(0, index++, function fill() {
+	    const ch = this.pop();
+	    const len = this.pop(true);
+	    const dest = this.pop();
+	    if(len > 0) {
+		for(let i = 0; i < len; i++) {
+		    this.memory.setByte(dest + i, ch);
+		}
+	    }
+	})
+	this.addCode(0, index++, function emit() {
+	    this.systemOut.log(String.fromCharCode(this.pop()));
+	})
+	this.addCode(0, index++, function space() {
+	    this.systemOut.log(' ');
+	})
+	this.addCode(0, index++, function spaces() {
+	    const a = this.pop(true);
+	    for(let i = 0; i < a; i++) {
+		this.systemOut.log(' ');
+	    }
+	})
+	this.addCode(0, index++, function find() {
+	    this.callCode(DUP);
+	    const name = this.readCountedString();
+	    const found = this.findWord(name);
+	    if(found === 0) {
+		this.push(0);
+	    } else {
+		this.callCode(DROP);
+		this.push(found.cfa);
+		if(found.immediate === -1) {
+		    this.push(1);
+		} else {
+		    this.push(-1);
+		}
+	    }
+	})
+    }
+}
