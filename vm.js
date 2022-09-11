@@ -52,6 +52,7 @@ const ForthVM = class {
 	this.environment = [];
 	this.skip = 0;
 	this.pictureBuffer = '';
+	this.jstack = [];
     }
 
     getIp() {
@@ -114,6 +115,14 @@ const ForthVM = class {
 	const a = this.rstack.pop(signed, label);
 	this.lastWord = a;
 	return a;
+    }
+
+    jpush(val) {
+	this.jstack.push(val);
+    }
+
+    jpop() {
+	return this.jstack.pop();
     }
 
     rpushNested(val, label) {
@@ -494,6 +503,7 @@ const ForthVM = class {
     clearStacks() {
 	this.stack.clear();
 	this.rstack.clear();
+	this.jstack = [];
 	this.controlFlowUnresolved = 0;
 	this.resetTib();
 	this.pictureBuffer = '';
