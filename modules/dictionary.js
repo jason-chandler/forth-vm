@@ -1296,5 +1296,32 @@ export class Dictionary {
 		}
 	    }
 	})
+	vm.addCode(0, index++, function js() {
+	    const a = vm.readStringFromStack();
+	    const jobject = eval(a);
+	    vm.jpush(jobject);
+	})
+	vm.addCode(0, index++, function jcall() {
+	    const a = vm.readStringFromStack();
+	    const jfun = eval(a);
+	    const arity = vm.pop();
+	    let arglist = [];
+	    const jthis = vm.jpop();
+	    for(var i = 0; i < arity; i++) {
+		const arg = vm.jpop();
+		arglist.push(arg);
+	    }
+	    jfun.apply(jthis, arglist);
+	})
+	vm.addCode(0, index++, function dotjs() {
+	    let k = '';
+	    let j = 0;
+	    for(let i of vm.jstack) {
+		k += i;
+		j++;
+		k += ' ';
+	    }
+	    vm.systemOut.log(k + ' <' + j + '>');
+	}, '.js')
     }
 }
