@@ -1311,7 +1311,7 @@ export class Dictionary {
 		const arg = vm.jpop();
 		arglist.push(arg);
 	    }
-	    jfun.apply(jthis, arglist);
+	    vm.jpush(jfun.apply(jthis, arglist));
 	})
 	vm.addCode(0, index++, function dotjs() {
 	    let k = '';
@@ -1323,5 +1323,36 @@ export class Dictionary {
 	    }
 	    vm.systemOut.log(k + ' <' + j + '>');
 	}, '.js')
+	vm.addCode(0, index++, function jdrop() {
+	    vm.jpop();
+	})
+	vm.addCode(0, index++, function jswap() {
+	    const b = vm.jpop();
+	    const a = vm.jpop();
+	    vm.jpush(b);
+	    vm.jpush(a);
+	})
+	vm.addCode(0, index++, function jdup() {
+	    vm.jpush(vm.jstack[vm.jstack.length - 1]);
+	})
+	vm.addCode(0, index++, function jrot() {
+	    if(vm.jstack.length < 3) {
+		vm.abort('STACK UNDERFLOW');
+	    }
+	    const c = vm.jpop();
+	    const b = vm.jpop();
+	    const a = vm.jpop();
+	    vm.jpush(b);
+	    vm.jpush(c);
+	    vm.jpush(a);
+	})
+	vm.addCode(0, index++, function stojs() {
+	    vm.jpush(vm.pop(true));
+	}, 's>js')
+	vm.addCode(0, index++, function fixtojs() {
+	    const b = vm.pop();
+	    const a = vm.pop();
+	    vm.jpush(a / b);
+	}, '/>js')
     }
 }

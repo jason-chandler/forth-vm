@@ -122,6 +122,9 @@ const ForthVM = class {
     }
 
     jpop() {
+	if(this.jstack.length < 1) {
+	    this.abort('STACK UNDERFLOW');
+	}
 	return this.jstack.pop();
     }
 
