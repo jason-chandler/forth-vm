@@ -3,7 +3,7 @@ import { Stack } from './modules/stack.js';
 import { Word } from './modules/word.js';
 import { Dictionary } from './modules/dictionary.js';
 
-const ForthVM = class {
+const DromedaryForthVM = class {
     ip;
     dp;
     cellSize;
@@ -665,5 +665,5 @@ const ForthVM = class {
     }
 }
 
-window.forth = new ForthVM();
+window.forth = new DromedaryForthVM();
 
