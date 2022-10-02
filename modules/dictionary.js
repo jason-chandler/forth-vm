@@ -903,7 +903,8 @@ export class Dictionary {
 		const fileName = vm.readStringFromStack();
 		return vm.loadFile(fileName).then((loadedFile) => {
 		    const file = vm.filterWeirdSpacing(loadedFile);
-		    const substrindex = tempTib.match('include ' + fileName).index + 'include '.length + fileName.length;
+		    const matchPattern = RegExp('include ' + fileName, 'gi');
+		    const substrindex = tempTib.match(matchPattern).index + 'include '.length + fileName.length;
 		    const resumeTib = String(file) + ' \n ' + tempTib.substring(resumeToIn);
 		    for(let splitTib of resumeTib.split('\n')) {
 			const result = vm.interpret(splitTib + ' \n ');
